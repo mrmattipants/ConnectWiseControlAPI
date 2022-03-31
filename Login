@@ -1,0 +1,3709 @@
+
+<!DOCTYPE html>
+<html>
+<head><meta http-equiv="X-UA-Compatible" content="IE=edge" /><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+	<script>
+
+		// Enums
+		const Page = Object.freeze({
+			Login: 'Login',
+			ChangePassword: 'ChangePassword',
+			ResetPassword: 'ResetPassword',
+		});
+		const FormStep = Object.freeze({
+			Default: 'Default',
+			OneTimePassword: 'OneTimePassword',
+			ResetPassword: 'ResetPassword',
+		});
+		const Field = Object.freeze({
+			UserName: 'userName',
+			Password: 'password',
+			OneTimePassword: 'oneTimePassword',
+			ShouldTrust: 'shouldTrust',
+			NewPassword: 'newPassword',
+			VerifyNewPassword: 'verifyNewPassword',
+			ResetCode: 'resetCode',
+		});
+
+		const _authState = {
+			page: Page.Login,
+			formStep: FormStep.Default,
+			isFormSubmitting: false,
+			error: '',
+			fieldNameToFocus: '',
+			securityNonce: '',
+			formState: {},
+		};
+
+		function refreshAuthPanel() {
+			const textInput = (labelTextResource, inputOptions) =>
+				$label({ _textResource: labelTextResource, className: 'AuthTextBox' }, [$input(inputOptions), $div()]);
+
+			const authPanelElement = $('.AuthPanel');
+
+			switch (_authState.page) {
+				case Page.Login:
+					switch (_authState.formStep) {
+						case FormStep.Default:
+							SC.ui.setContents(authPanelElement, [
+								$form({ _commandName: 'SubmitLogin' }, [
+									$h1({ _textResource: 'LoginPanel.LoginHeading' }),
+									$p({ className: 'Instructions', _htmlResource: 'LoginPanel.LoginReason.' + SC.util.getEnumValueName(SC.types.LoginReason, SC.context.loginReason) + '.Message' }),
+									textInput('LoginPanel.UserNamePlaceholderText', { type: 'text', name: Field.UserName, autocomplete: 'username' }),
+									textInput('LoginPanel.PasswordPlaceholderText', { type: 'password', name: Field.Password, autocomplete: SC.context.allowPasswordAutoComplete ? 'current-password' : 'off' }),
+									$input({ type: 'submit', value: SC.res['LoginPanel.LoginButtonText'] }),
+									SC.context.isForgotPasswordAvailable && $p($a({ className: 'ForgotPasswordLinkButton', _textResource: 'LoginPanel.ForgotPasswordLinkButtonText', _commandName: 'ResetPassword' })),
+									$p({ className: 'ErrorLabel' }),
+								]),
+								SC.context.externalAuthenticationProviderInfos.length && $div({ className: 'ExternalAuthenticationPanel' }, [
+									$h3({ _textResource: 'LoginPanel.ExternalAuthenticationMessage' }),
+									SC.context.externalAuthenticationProviderInfos.map(({ providerName, displayName }) =>
+										$form({ _commandName: 'InitiateExternalProviderAuth', _commandArgument: providerName }, [
+											$input({ type: 'submit', name: providerName, value: SC.util.formatString(SC.res['LoginPanel.ExternalAuthenticationButtonTextFormat'], displayName) }),
+										])
+									),
+								]),
+							]);
+							break;
+						case FormStep.OneTimePassword:
+							SC.ui.setContents(authPanelElement, $form({ _commandName: 'SubmitLogin' }, [
+								$h1({ _textResource: 'LoginPanel.LoginHeading' }),
+								$p({ className: 'Instructions', _htmlResource: 'LoginPanel.OneTimePasswordMessage' }),
+								$p($input({ type: 'text', name: Field.OneTimePassword, autocomplete: 'one-time-code', placeholder: SC.res['LoginPanel.OneTimePasswordPlaceholderText'] })),
+								SC.context.canTrustDevice && $label({ className: 'AuthCheckBox' }, [
+									$input({ type: 'checkbox', name: Field.ShouldTrust }),
+									$span({ _textResource: 'LoginPanel.OneTimePasswordShouldTrustCheckBoxText' }),
+								]),
+								$input({ type: 'submit', value: SC.res['LoginPanel.LoginButtonText'] }),
+								$p({ className: 'ErrorLabel' }),
+							]));
+							break;
+					}
+					break;
+
+				case Page.ChangePassword:
+					SC.ui.setContents(authPanelElement, $form({ _commandName: 'SubmitChangePassword' }, [
+						$h1({ _textResource: 'ChangePasswordPanel.ChangePasswordHeading' }),
+						$p({ className: 'Instructions', _htmlResource: 'ChangePasswordPanel.Description' }),
+						textInput('ChangePasswordPanel.UserNamePlaceholderText', { type: 'text', name: Field.UserName, autocomplete: 'username' }),
+						textInput('ChangePasswordPanel.CurrentPasswordPlaceholderText', { type: 'password', name: Field.Password, autocomplete: SC.context.allowPasswordAutoComplete ? 'current-password' : 'off' }),
+						textInput('ChangePasswordPanel.NewPasswordPlaceholderText', { type: 'password', name: Field.NewPassword, autocomplete: 'new-password' }),
+						textInput('ChangePasswordPanel.VerifyNewPasswordPlaceholderText', { type: 'password', name: Field.VerifyNewPassword, autocomplete: 'new-password' }),
+						$input({ type: 'submit', value: SC.res['ChangePasswordPanel.ChangePasswordButtonText'] }),
+						$p({ className: 'ErrorLabel' }),
+					]));
+					break;
+
+				case Page.ResetPassword:
+					switch (_authState.formStep) {
+						case FormStep.Default:
+							SC.ui.setContents(authPanelElement, $form({ _commandName: 'SubmitResetPassword' }, [
+								$h1({ _textResource: 'ResetPasswordPanel.RequestPasswordResetHeading' }),
+								$p({ className: 'Instructions', _htmlResource: 'ResetPasswordPanel.RequestPasswordResetMessage' }),
+								textInput('ResetPasswordPanel.UserNamePlaceholderText', { type: 'text', name: Field.UserName, autocomplete: 'username' }),
+								$input({ type: 'submit', value: SC.res['ResetPasswordPanel.RequestPasswordResetButtonText'] }),
+								$p({ className: 'ErrorLabel' }),
+							]));
+							break;
+						case FormStep.ResetPassword:
+							SC.ui.setContents(authPanelElement, $form({ _commandName: 'SubmitResetPassword' }, [
+								$h1({ _textResource: 'ResetPasswordPanel.ResetPasswordHeading' }),
+								$p({ className: 'Instructions', _htmlResource: 'ResetPasswordPanel.PasswordResetEmailSentMessage' }),
+								textInput('ResetPasswordPanel.UserNamePlaceholderText', { type: 'text', name: Field.UserName, autocomplete: 'username', readOnly: true }),
+								textInput('ResetPasswordPanel.ResetCodePlaceholderText', { type: 'text', name: Field.ResetCode }),
+								textInput('ResetPasswordPanel.NewPasswordPlaceholderText', { type: 'password', name: Field.NewPassword, autocomplete: 'new-password' }),
+								textInput('ResetPasswordPanel.VerifyNewPasswordPlaceholderText', { type: 'password', name: Field.VerifyNewPassword, autocomplete: 'new-password' }),
+								$input({ type: 'submit', value: SC.res['ResetPasswordPanel.ResetPasswordButtonText'] }),
+								$p({ className: 'ErrorLabel' }),
+							]));
+							break;
+					}
+					break;
+			}
+
+			SC.css.ensureClass(authPanelElement, `${_authState.page}Page`, true);
+
+			for (const form of authPanelElement.querySelectorAll('form')) {
+				SC.ui.applyFormState(form, _authState.formState);
+				for (const formControl of Array.from(form.elements))
+					formControl.disabled = _authState.isFormSubmitting;
+				for (const linkElement of form.querySelectorAll('a'))
+					SC.ui.setDisabled(linkElement, _authState.isFormSubmitting);
+				for (const errorLabel of form.querySelectorAll('.ErrorLabel'))
+					SC.ui.setInnerText(errorLabel, _authState.error);
+			}
+
+			// DEBUG
+			// SC.ui.setContents($('.InfoPanel'), $pre({ style: 'background-color: white' }, JSON.stringify(_authState, null, 2)));
+		}
+
+		function smartFocusFormField() {
+			SC.ui.smartFocusFormField(
+				_authState.fieldNameToFocus
+					? [_authState.fieldNameToFocus]
+					: [Field.UserName, Field.Password, Field.OneTimePassword, Field.ResetCode, Field.NewPassword]
+			);
+		}
+
+	</script>
+<script src="Script.ashx?__Cache=81f2495b-1b0a-42a0-be81-518694376b86" id="defaultScript"></script>
+<link href="App_Themes/SolidWithGreen/Default.css?__Cache=386682d8-c2ec-41f5-9956-dac10e59ff16" type="text/css" rel="stylesheet" /><link href="FavIcon.axd?__Cache=5062f3c2-cfe5-4446-aa50-d5f38949c959" rel="shortcut icon" />
+<script>SC.util.mergeIntoContext({"allowPasswordAutoComplete":false,"canTrustDevice":true,"canTryLogin":true,"externalAuthenticationProviderInfos":[],"isForgotPasswordAvailable":true,"loginReason":3,"loginReturnUrl":"/Administration","userNameHint":"Administrator"});</script>
+<script>SC.util.mergeIntoContext({"focusedControlID":null,"userName":"Administrator","userDisplayName":"Administrator","isUserAuthenticated":true,"antiForgeryToken":"50VtHa/5ut02UTa9z+24GPvd32yDxrJemeWTE8UqVg4BDUFkbWluaXN0cmF0b3IBiyC0MquzLUI=","isUserAdministrator":true,"canManageSharedToolbox":true,"pageBaseFileName":"Login","notifyActivityFrequencyMilliseconds":600000,"loginAfterInactivityMilliseconds":0,"canChangePassword":true,"controlPanelUrl":null,"pageType":"LoginPage","processType":1,"userAgentOverride":null,"sessionTypeInfos":[{"sessionType":0,"isButtonVisible":true},{"sessionType":1,"isButtonVisible":true},{"sessionType":2,"isButtonVisible":true}]});</script>
+<link href="App_Extensions/88da7894-b21b-48bd-badd-ba8e0adb748f/BridgeStyle.css" type="text/css" rel="stylesheet" />
+<script>SC.extension.addInitializeProc('fa369545-ba27-4670-b053-a9f65f3269b0', function (extensionContext) {
+if (SC.context.pageType == 'AdministrationPage' && SC.context.isUserAuthenticated)
+	SC.service.GetThemeInfo(function (themeInfo) {
+		SC.util.includeStyleSheet(extensionContext.baseUrl + 'css/Style.css');
+	});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'WebConfigSave':
+			SC.dialog.showModalButtonDialog(
+				'Prompt',
+				SC.res['AdvancedConfig.ApplyChanges'],
+				'OK',
+				'Default',
+				function (container) {
+					SC.ui.setContents(container, [
+						eventArgs.commandArgument === 'WebConfigRestore' ? $p(SC.res['AdvancedConfig.RestoreDefaults.WebConfigWarning']) : $p(SC.res['AdvancedConfig.RestartInstanceWarning'])
+					]);
+				},
+				function () {
+					var appSettings = JSON.parse(sessionStorage.getItem('WebConfigAppSettings'));
+					var pageSettings = JSON.parse(JSON.stringify(appSettings.location));
+					delete appSettings.location;
+
+					SC.service.WriteChangesToWebConfig(appSettings, pageSettings, function (result) {
+						if (result === 'OK') {
+							sessionStorage.removeItem('WebConfigAppSettings');
+							SC.dialog.showModalActivityAndReload('Save', true, window.location.href.split('#')[0]);
+						} else {
+							SC.dialog.showModalMessageBox(SC.res['AdvancedConfig.SaveError.Title'], SC.res['AdvancedConfig.SaveError.WebConfigDescription'] + ' ' + result);
+						}
+					});
+				}
+			);
+			break;
+		case 'AppConfigSave':
+			SC.dialog.showModalButtonDialog(
+				'Prompt',
+				SC.res['AdvancedConfig.ApplyChanges'],
+				'OK',
+				'Default',
+				function (container) {
+					SC.ui.setContents(container, [
+						eventArgs.commandArgument === 'AppConfigRestore' ? $p(SC.res['AdvancedConfig.RestoreDefaults.AppConfigWarning']) : $p(SC.res['AdvancedConfig.ReinstallWarning'])
+					]);
+				},
+				function () {
+					var systemSettings = JSON.parse(sessionStorage.getItem('AppConfigAppSettings')).SystemSettings;
+					var userInterfaceSettings = JSON.parse(sessionStorage.getItem('AppConfigAppSettings')).UserInterfaceSettings;
+
+					SC.service.WriteChangesToAppConfig(systemSettings, userInterfaceSettings, AppConfigDefaults, function (result) {
+						if (result === 'OK') {
+							sessionStorage.removeItem('AppConfigAppSettings');
+							window.location.reload();
+						} else {
+							SC.dialog.showModalMessageBox(SC.res['AdvancedConfig.SaveError.Title'], SC.res['AdvancedConfig.SaveError.AppConfigDescription'] + ' ' + result);
+						}
+					});
+				}
+			);
+			break;
+	}
+});
+
+
+});</script>
+<script>SC.extension.addInitializeProc('88da7894-b21b-48bd-badd-ba8e0adb748f', function (extensionContext) {
+BridgeService = {
+	types: {
+		SupportedProtocol: {
+			VNC: 0,
+			RDP: 1,
+			//SSH: 2,
+			//Telnet: 3,
+			Unknown: 999
+		}
+	},
+	customPropertyIndex: 6,
+	bridgeServiceOnly: 0,
+	bridgeClientOnly: 1,
+	bridgeServiceConfigurations: null,
+	lastUpdateConfigurationTime: null,
+	configurationUpdateInterval: 60000,
+	commandTimeoutInitial: 1000,
+	commandTimeoutMax: 20000,
+	probeUpdateInterval: 10000,
+	probeTimeoutMax: 600000,
+	commandTimeoutMultiplier: 2,
+	nullGuid: '00000000-0000-0000-0000-000000000000',
+	selectedBridgeSessionName: null,
+	selectedBridgeSessionSessionID: null,
+	selectedBridgeSessionCustomProperty7: null,
+	selectedBridgeServiceSession: null,
+	triggeredDispatchExecute: false,
+	isGettingBridgeConfig: false,
+	defaultRfbPort: 5900,
+	defaultRdpPort: 3389
+};
+
+function isBridgeTab(tabName) {
+	switch (tabName) {
+		case 'Bridge':
+			return true;
+		default:
+			return false;
+	}
+}
+
+function isBridgeSession(customPropertyValue, serviceClientBoth) {
+	var regExp1 = new RegExp(SC.util.formatString('.*{0}.*', extensionContext.settingValues.BridgeServiceSessionIdentifier), 'i');
+	var regExp2 = new RegExp(SC.util.formatString('.*\\({0}\\).*', extensionContext.settingValues.BridgeSessionIdentifier), 'i');
+
+	if (serviceClientBoth === BridgeService.bridgeServiceOnly)
+		return regExp1.test(customPropertyValue);
+	else if (serviceClientBoth === BridgeService.bridgeClientOnly)
+		return !regExp1.test(customPropertyValue) && regExp2.test(customPropertyValue);
+	else
+		return regExp1.test(customPropertyValue) || regExp2.test(customPropertyValue);
+}
+
+function isBridgeServiceSession(customPropertyValue) {
+	var regExp = new RegExp(SC.util.formatString('.*{0}.*', extensionContext.settingValues.BridgeServiceSessionIdentifier), 'i');
+	return regExp.test(customPropertyValue);
+}
+
+function isBridgeServiceDisabledCommand(eventArgs) {
+	switch (eventArgs.commandArgument) {
+		case 'Timeline':
+		case 'Processes':
+		case 'Software':
+		case 'EventLog':
+		case 'Services':
+		case 'Updates':
+			return true;
+	}
+
+	switch (eventArgs.commandName) {
+		case 'GetHostPass':
+		case 'Join':
+			return true;
+	}
+
+	return false;
+}
+
+function isBridgeDisabledCommand(eventArgs) {
+	switch (eventArgs.commandArgument) {
+		case 'Messages':
+		case 'Commands':
+		case 'OpenPresetChatMenu':
+		case 'OpenCommandToolbox':
+		case 'Processes':
+		case 'Software':
+		case 'EventLog':
+		case 'Services':
+			return true;
+	}
+
+	switch (eventArgs.commandName) {
+		case 'Reinstall':
+		case 'RunCommand':
+		case 'RunTool':
+		case 'SendMessage':
+		case 'Wake':
+			return true;
+	}
+
+	return false;
+}
+
+var ensureClassIfElementExists = function (element, className, hasOrNot) {
+	if (element)
+		SC.css.ensureClass(element, className, hasOrNot);
+};
+
+var selectedBridgeServiceHasPermission = function (permission) {
+	return BridgeService.selectedBridgeServiceSession &&
+		BridgeService.selectedBridgeServiceSession.Permissions &&
+		(BridgeService.selectedBridgeServiceSession.Permissions & permission) > 0;
+}
+
+var commandContextHasPermission = function (context, permission) {
+	return context && context.permissions && (context.permissions & permission) > 0;
+}
+
+SC.event.addGlobalHandler(SC.event.PageDataRefreshed, function () {
+	if (SC.context.pageType == 'HostPage') {
+		Array.prototype.forEach.call($('.DetailTableContainer table').rows, function (r) {
+			if (isBridgeSession(r._dataItem.CustomPropertyValues[BridgeService.customPropertyIndex], 2)) {
+				var guestElement = r.querySelector('div.Guest');
+
+				if (SC.css.containsClass(guestElement, 'Connected'))
+					SC.css.ensureClass(guestElement, 'BridgeSessionConnected', true);
+				else if (SC.css.containsClass(guestElement, 'Guest'))
+					SC.css.ensureClass(guestElement, 'BridgeSessionDisconnected', true);
+			}
+		});
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	switch (eventArgs.area) {
+		case 'ExtrasPopoutPanel':
+			if (SC.context.pageType == 'AdministrationPage') {
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'CreateBridgeSessionGroup', text: SC.res['BridgeService.ExtrasPanel.CreateSessionGroup.Text'] }
+				);
+
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'DeleteBridgeCommandEvents', text: SC.res['BridgeService.DeleteBridgeCommandEvents.Text'] }
+				);
+
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'DownloadBridgeInstaller', text: SC.res['BridgeService.DownloadBridgeInstaller.Text'] }
+				);
+			}
+			break;
+		case 'HostDetailTabList':
+			eventArgs.buttonDefinitions.unshift(
+				{ commandName: 'Select', commandArgument: 'Bridge', text: SC.res['BridgeService.BridgeTab.Label'], imageUrl: extensionContext.baseUrl + 'Images/BridgeBlack.png' }
+			);
+			break;
+		case 'HostDetailPanel':
+		case 'HostDetailPopoutPanel':
+			if (window.getSessionTypeUrlPart() == SC.types.SessionType.Access)
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'IsBridgeMachineReachable', className: 'AlwaysOverflow', text: SC.res['BridgeService.SessionCommand.IsBridgeMachineReachable'] },
+					{ commandName: 'GoToBridgeService', className: 'AlwaysOverflow', text: SC.res['BridgeService.SessionCommand.GoToBridgeService'] }
+				);
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtonState, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		// enable IsBridgeMachineReachable and GoToBridgeService commands if one bridge access session is selected and user has RunCommandOutsideSession permission
+		case 'IsBridgeMachineReachable':
+		case 'GoToBridgeService':
+			if (eventArgs.commandContext &&
+				eventArgs.commandContext.sessions &&
+				eventArgs.commandContext.sessions.length === 1 &&
+				eventArgs.commandContext.sessions[0].SessionType === 2 &&
+				isBridgeSession(eventArgs.commandContext.sessions[0].CustomPropertyValues[BridgeService.customPropertyIndex], BridgeService.bridgeClientOnly) &&
+				commandContextHasPermission(eventArgs.commandContext, SC.types.SessionPermissions.RunCommandOutside)) {
+				eventArgs.isEnabled = true;
+				BridgeService.selectedBridgeSessionName = eventArgs.commandContext.sessions[0].Name;
+				BridgeService.selectedBridgeSessionSessionID = eventArgs.commandContext.sessions[0].SessionID;
+				BridgeService.selectedBridgeSessionCustomProperty7 = eventArgs.commandContext.sessions[0].CustomPropertyValues[BridgeService.customPropertyIndex];
+			} else {
+				eventArgs.isEnabled = false;
+				BridgeService.selectedBridgeSessionName = null;
+				BridgeService.selectedBridgeSessionSessionID = null;
+				BridgeService.selectedBridgeSessionCustomProperty7 = null;
+			}
+			break;
+
+		case 'Select':
+			if (eventArgs.commandArgument == 'Bridge')
+				eventArgs.isEnabled = eventArgs.isVisible = commandContextHasPermission(eventArgs.commandContext, SC.types.SessionPermissions.RunCommandOutside);
+			break;
+
+		case 'ShowAddConnectionPopout':
+			eventArgs.isEnabled = eventArgs.isVisible = commandContextHasPermission(eventArgs.commandContext, SC.types.SessionPermissions.Edit);
+			break;
+	}
+
+	var commandRows, startElement;
+
+	if (SC.context.pageType == 'HostPage') {
+		commandRows = Array.prototype.filter.call($('.DetailTableContainer table').rows, function (r) { return (SC.ui.isChecked(r) || SC.ui.isSelected(r)) && isBridgeSession(r._dataItem.CustomPropertyValues[BridgeService.customPropertyIndex], BridgeService.bridgeServiceOnly); });
+
+		if (commandRows.length === 1) {
+			var bridgeElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['BridgeService.BridgeTab.Label']; });
+
+			if (!SC.css.containsClass(bridgeElement, 'Selected') && !BridgeService.triggeredDispatchExecute) {
+				SC.command.dispatchExecuteCommand(bridgeElement, bridgeElement.firstChild, bridgeElement, 'Select', 'Bridge', false, false, false);
+				BridgeService.triggeredDispatchExecute = true;
+			}
+		}
+		else
+			BridgeService.triggeredDispatchExecute = false;
+
+		if (isBridgeDisabledCommand(eventArgs)) { // disable and hide messages and commands tabs if Bridge Client or Bridge Service session(s) selected
+			commandRows = Array.prototype.filter.call($('.DetailTableContainer table').rows, function (r) { return (SC.ui.isChecked(r) || SC.ui.isSelected(r)) && isBridgeSession(r._dataItem.CustomPropertyValues[BridgeService.customPropertyIndex], 2); });
+
+			if (commandRows.length) {
+				eventArgs.isEnabled = false;
+				startElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['Command.SelectStart.Text']; });
+				var messagesElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['Command.SelectMessages.Text']; });
+				var commandsElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['Command.SelectCommands.Text']; });
+
+				if (startElement !== null && startElement !== undefined && (SC.css.containsClass(messagesElement, 'Selected') || SC.css.containsClass(commandsElement, 'Selected')))
+					SC.command.dispatchExecuteCommand(startElement, startElement.firstChild, startElement, 'Select', 'Start', false, false, false);
+
+				eventArgs.isVisible = false;
+			}
+		} else if (isBridgeServiceDisabledCommand(eventArgs)) { // disable and hide timeline tab if Bridge Service session is selected
+			commandRows = Array.prototype.filter.call($('.DetailTableContainer table').rows, function (r) { return (SC.ui.isChecked(r) || SC.ui.isSelected(r)) && isBridgeSession(r._dataItem.CustomPropertyValues[BridgeService.customPropertyIndex], BridgeService.bridgeServiceOnly); });
+
+			if (commandRows.length) {
+				eventArgs.isEnabled = false;
+				eventArgs.isVisible = false;
+
+				startElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['Command.SelectStart.Text']; });
+			}
+		} else if (eventArgs.commandArgument === 'Bridge') { // disable and hide Bridge tab if Bridge Service session not selected
+			commandRows = Array.prototype.filter.call($('.DetailTableContainer table').rows, function (r) { return (SC.ui.isChecked(r) || SC.ui.isSelected(r)) && isBridgeSession(r._dataItem.CustomPropertyValues[BridgeService.customPropertyIndex], BridgeService.bridgeServiceOnly); });
+
+			if (commandRows.length !== 1) {
+				eventArgs.isEnabled = false;
+
+				startElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === SC.res['Command.SelectStart.Text']; });
+				var bridgeElement = SC.ui.findDescendent($('.DetailTabList'), function (e) { return e.title === 'Bridge'; });
+
+				if (startElement !== null && startElement !== undefined && SC.css.containsClass(bridgeElement, 'Selected'))
+					SC.command.dispatchExecuteCommand(startElement, startElement.firstChild, startElement, 'Select', 'Start', false, false, false);
+
+				eventArgs.isVisible = false;
+			}
+		}
+	}
+});
+
+var beginQueryConnectivityResultsLoop = function (bridgeSessionCP7, bridgeCommandID, timeout) {
+	SC.service.QueryReachabilityResults(
+		bridgeSessionCP7,
+		bridgeCommandID,
+		function (connectivityResults) {
+			if (connectivityResults == 2)
+				SC.dialog.showModalMessageBox(SC.res['BridgeService.BridgeTab.Label'], SC.res['BridgeService.SessionCommand.Reachable']);
+			else if (connectivityResults == 0)
+				SC.dialog.showModalMessageBox(SC.res['BridgeService.BridgeTab.Label'], SC.res['BridgeService.SessionCommand.Unreachable']);
+			else if (BridgeService.commandTimeoutMultiplier * timeout < BridgeService.commandTimeoutMax)
+				setTimeout(function () {
+					beginQueryConnectivityResultsLoop(bridgeSessionCP7, bridgeCommandID, BridgeService.commandTimeoutMultiplier * timeout);
+				},
+					timeout
+				);
+			else
+				SC.dialog.showModalMessageBox(SC.res['BridgeService.BridgeTab.Label'], SC.res['BridgeService.SessionCommand.Unreachable']);
+		}
+	);
+};
+
+var getBridgeServiceSessionIdFromBridgeSessionCP7 = function (bridgeSessionCustomProperty7) {
+	try {
+		return bridgeSessionCustomProperty7.substring(bridgeSessionCustomProperty7.length - 45, bridgeSessionCustomProperty7.length - 9);
+	} catch (ex) {
+		return BridgeService.nullGuid;
+	}
+};
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	var sessionInfo = SC.pagedata.get();
+	var _dataItem = SC.command.getDataItem(eventArgs.commandElement);
+
+	switch (eventArgs.commandName) {
+		case 'DeleteBridgeCommandEvents':
+			SC.dialog.showModalActivityBox(SC.res['BridgeService.DeleteBridgeCommandEvents.Deleting.Title'], SC.res['BridgeService.DeleteBridgeCommandEvents.Deleting.Message']);
+			SC.service.UserDeleteBridgeCommandEvents(function () {
+				SC.dialog.hideModalDialog();
+			});
+			break;
+		case 'CreateBridgeSessionGroup':
+			SC.service.EnsureBridgeSessionGroupExists(function (msg) { console.log(msg); });
+			break;
+		case 'DownloadBridgeInstaller':
+			var productVersionArray = SC.context.productVersion.split('.').map(it => parseInt(it));
+			SC.util.launchUrl(extensionContext.baseUrl + (productVersionArray[0] < 20 || (productVersionArray[0] == 20 && productVersionArray[1] < 13) ? 'Old' : '') + 'Download.ashx');
+			break;
+		case 'RefreshBridgeConfiguration':
+			ensureClassIfElementExists($('.RefreshBridgeConfigurationButton'), 'Loading', true);
+			startRefreshBridgeServiceConfiguration();
+			break;
+		case 'IsBridgeMachineReachable':
+			SC.dialog.showModalActivityBox(SC.res['BridgeService.BridgeTab.Label'], SC.res['BridgeService.SessionCommand.CheckingReachability']);
+			SC.service.StartIsBridgeMachineReachable(sessionInfo.SessionGroupPath, BridgeService.selectedBridgeSessionCustomProperty7, function (bridgeCommandID) {
+				if (bridgeCommandID != BridgeService.nullGuid)
+					beginQueryConnectivityResultsLoop(BridgeService.selectedBridgeSessionCustomProperty7, bridgeCommandID, BridgeService.commandTimeoutInitial);
+				else
+					SC.dialog.showModalMessageBox(SC.res['BridgeService.BridgeTab.Label'], SC.res['BridgeService.SessionCommand.FailedReachabilityCheck']);
+			});
+			break;
+		case 'GoToBridgeService':
+			var bridgeServiceSessionID = getBridgeServiceSessionIdFromBridgeSessionCP7(BridgeService.selectedBridgeSessionCustomProperty7);
+			window.setSearchUrlPart(null);
+			window.setSessionUrlPart(bridgeServiceSessionID);
+			SC.pagedata.notifyDirty();
+			break;
+		case 'EditBridgeSession':
+			if (selectedBridgeServiceHasPermission(SC.types.SessionPermissions.Edit))
+				promptEditClientConnection(
+					BridgeService.selectedBridgeServiceSession.SessionID,
+					_dataItem,
+					null,
+					null
+				);
+			break;
+		case 'ShowAddConnectionPopout':
+			if (selectedBridgeServiceHasPermission(SC.types.SessionPermissions.Edit))
+				SC.popout.togglePanel(
+					eventArgs.commandElement,
+					function (popoutPanel) {
+						SC.ui.setContents(popoutPanel, [
+							$div([
+								SC.command.createCommandButtons([
+									{ commandName: 'AddSingleBridgeSession' },
+									{ commandName: 'MassAddBridgeSessions' }
+								])
+							]),
+						]);
+					},
+					null,
+					false
+				);
+			break;
+		case 'MassAddBridgeSessions':
+			if (selectedBridgeServiceHasPermission(SC.types.SessionPermissions.Edit))
+				showScanNetworkDialog();
+			break;
+		case 'AddSingleBridgeSession':
+			if (selectedBridgeServiceHasPermission(SC.types.SessionPermissions.Edit))
+				promptAddSingleBridgeConnection();
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.InitializeTab, function (eventArgs) {
+	if (isBridgeTab(eventArgs.tabName)) {
+		SC.command.queryAndAddCommandButtons(eventArgs.container, eventArgs.tabName + 'Button');
+		SC.ui.setContents(eventArgs.container, [
+			$div({ className: 'BridgeHeader' }, [
+				$h3('Connections'),
+				$div(SC.command.createCommandButtons([{ className: 'RefreshBridgeConfigurationButton', commandName: 'RefreshBridgeConfiguration' }, { commandName: 'ShowAddConnectionPopout' }]))
+			]),
+			$div({ className: 'BridgeDataTableContainer Loading' },
+				$table({ className: 'DataTable BridgeDataTable' }, [
+					$tbody({ className: 'BridgeDataTableBody' })
+				]),
+				$p({ className: 'BridgeDataTableMessageContainer' })
+			)
+		]);
+	} else {
+		// no longer in this tab need to reset state vars
+		BridgeService.bridgeServiceConfigurations = [];
+		BridgeService.lastUpdateConfigurationTime = null;
+	}
+});
+
+var startRefreshBridgeServiceConfiguration = function () {
+	SC.ui.clear($('.BridgeDataTableMessageContainer'));
+	var sessionInfo = SC.pagedata.get();
+
+	BridgeService.lastUpdateConfigurationTime = Date.now();
+	BridgeService.isGettingBridgeConfig = true;
+
+	SC.service.StartQueryBridgeServiceConfiguration(sessionInfo.SessionGroupPath, BridgeService.selectedBridgeServiceSession.SessionID, BridgeService.selectedBridgeServiceSession.Name, sessionInfo.Version, function (bridgeCommandContext) {
+		tryGetBridgeServiceConfigurations(bridgeCommandContext.Sessions, bridgeCommandContext.BridgeCommandIDs, BridgeService.commandTimeoutInitial);
+	});
+};
+
+SC.event.addGlobalHandler(SC.event.RefreshTab, function (eventArgs) {
+	if (isBridgeTab(eventArgs.tabName) && isBridgeServiceSession(eventArgs.session.CustomPropertyValues[BridgeService.customPropertyIndex]) && isProcessTypeConnected(eventArgs.session, SC.types.ProcessType.Guest)) {
+		if (BridgeService.selectedBridgeServiceSession &&
+			BridgeService.selectedBridgeServiceSession.SessionID &&
+			eventArgs.session &&
+			eventArgs.session.SessionID &&
+			BridgeService.selectedBridgeServiceSession.SessionID != eventArgs.session.SessionID
+		) {
+			BridgeService.bridgeServiceConfigurations = [];
+			BridgeService.lastUpdateConfigurationTime = null;
+
+			if (BridgeService.isGettingBridgeConfig &&
+				BridgeService.selectedBridgeServiceSession &&
+				eventArgs.session &&
+				eventArgs.session.SessionID != BridgeService.selectedBridgeServiceSession.SessionID) {
+				// if a different bridge service is selected, we need to get its config instead
+				BridgeService.isGettingBridgeConfig = false;
+			}
+		}
+
+		BridgeService.selectedBridgeServiceSession = eventArgs.session;
+
+		// only run this once when this tab is selected
+		if (!BridgeService.isGettingBridgeConfig) {
+			if (BridgeService.selectedBridgeServiceSession !== null && isProcessTypeConnected(BridgeService.selectedBridgeServiceSession, SC.types.ProcessType.Guest)) {
+				if (BridgeService.lastUpdateConfigurationTime == null || (BridgeService.lastUpdateConfigurationTime - Date.now() > BridgeService.configurationUpdateInterval))
+					startRefreshBridgeServiceConfiguration();
+			}
+			else
+				updateBridgeTabWithInvalidOperationMessage($('.Bridge'));
+		}
+
+		populateBridgeTabWithBridgeServiceConfiguration(BridgeService.selectedBridgeServiceSession);
+	}
+});
+
+var tryGetBridgeServiceConfigurations = function (sessions, bridgeCommandIDs, timeout) {
+	if (sessions.length > 0) {
+		var sessionInfo = SC.pagedata.get();
+
+		setTimeout(function () {
+			SC.service.TryGetBridgeServiceConfigurations(
+				sessionInfo.SessionGroupPath,
+				sessions,
+				bridgeCommandIDs,
+				function (bridgeServiceConfigurations) {
+					if (bridgeServiceConfigurations.length > 0) {
+						if (BridgeService.selectedBridgeServiceSession && BridgeService.selectedBridgeServiceSession.SessionID == bridgeServiceConfigurations[0].BridgeServiceSessionID) {
+							BridgeService.bridgeServiceConfigurations = bridgeServiceConfigurations;
+
+							ensureClassIfElementExists($('.RefreshBridgeConfigurationButton'), 'Loading', false);
+							populateBridgeTabWithBridgeServiceConfiguration(BridgeService.selectedBridgeServiceSession);
+
+							BridgeService.isGettingBridgeConfig = false;
+						}
+					} else if ((timeout * BridgeService.commandTimeoutMultiplier) < BridgeService.commandTimeoutMax) {
+						tryGetBridgeServiceConfigurations(sessions, bridgeCommandIDs, timeout * BridgeService.commandTimeoutMultiplier);
+					} else {
+						SC.dialog.showModalMessageBox(SC.res['BridgeService.Message.Title'], SC.res['BridgeService.QueryConfigurations.TimeoutMessage']);
+						BridgeService.isGettingBridgeConfig = false;
+					}
+				}
+			);
+		}, timeout);
+	}
+	else
+		SC.dialog.showModalMessageBox(SC.res['BridgeService.Message.Title'], SC.res['BridgeService.QueryConfigurations.NoBridgeServiceSessionFound']);
+};
+
+var updateBridgeTabWithInvalidOperationMessage = function (tabContainer) {
+	while (tabContainer.childNodes.length > 1)
+		tabContainer.removeChild(tabContainer.childNodes[1]);
+
+	tabContainer.appendChild($div([
+		$p({ className: 'BridgeServiceInvalidOperation' }, SC.res['BridgeService.LoadConfiguration.InvalidOperation'])
+	]));
+};
+
+var showError = function (error) {
+	SC.css.ensureClass($('.BridgePopoutPanelError'), 'Empty', false);
+	$('.BridgePopoutPanelError').innerHTML = error;
+};
+
+var showScanNetworkDialog = function () {
+	var buttonPanel;
+	var optionsPanel;
+
+	var createScanServiceOption = function (optionText) {
+		var option = $option(optionText);
+		SC.event.addHandler(option, 'click', function () {
+			SC.css.ensureClass($('.RemoveScanServiceButton'), 'Disabled', false);
+		});
+
+		return option;
+	};
+
+	var addClickHandlerToLabelForInput = function (label, input) {
+		SC.event.addHandler(label, 'click', function () { // the for property in label doesn't seem to work so doing this for now
+			input.checked = true;
+		});
+	};
+
+	var createScanTypeOption = function (optionName, isChecked) {
+		var input = $input({ type: 'radio', name: 'ScanType', value: 0, id: optionName, checked: isChecked });
+		var label = $label({ for: optionName }, SC.res['BridgeService.' + optionName + 'Label.Text']);
+		addClickHandlerToLabelForInput(label, input);
+
+		return $div({ className: 'ScanTypeOptionsRow' }, [
+			input,
+			$div(
+				label,
+				$p(SC.res['BridgeService.' + optionName + 'Explanation.Text'])
+			)
+		]);
+	};
+
+	var createProtocolInputAndLabel = function (protocolAsString, checked) {
+		var id = 'Protocol' + protocolAsString;
+		var input = $input({ type: 'radio', name: 'Protocol', value: protocolAsString, id: id, checked: checked });
+		var label = $label({ for: id }, SC.res['BridgeService.' + id + 'Label.Text']);
+
+		addClickHandlerToLabelForInput(label, input);
+
+		return [input, label];
+	};
+
+	SC.dialog.showModalDialogRaw(
+		'BridgeScanNetworkDialog',
+		[
+			SC.dialog.createTitlePanel(SC.res['BridgeService.ScanNetworkDialog.Title']),
+			SC.dialog.createContentPanel([
+				$dl([
+					$dt(SC.res['BridgeService.ScanType.Text']),
+					$dd(
+						$div({ className: 'ScanTypeOptionsContainer' }, [
+							createScanTypeOption('ScanTypeARP', true),
+							createScanTypeOption('ScanTypeFullSubnet')
+						])
+					),
+					$dt(SC.res['BridgeService.ScanServices.Text']),
+					$dd(
+						$div({ className: 'ScanServicesContainer' }, [
+							optionsPanel = $select({ className: 'ScanServicesSelectList', size: 10, multiple: true }),
+							$div({ className: 'AddRemovePanel' }, [
+								SC.command.createCommandButtons(
+									[
+										{ commandName: 'OpenAddScanServicePopout' },
+										{ commandName: 'RemoveScanService', className: 'RemoveScanServiceButton Disabled' }
+									]
+								)
+							])
+						])
+					)
+				])
+			]),
+			buttonPanel = SC.dialog.createButtonPanel(SC.res['BridgeService.ScanNetworkDialog.ButtonText'])
+		],
+		function (eventArgs) {
+			switch (eventArgs.commandName) {
+				case 'OpenAddScanServicePopout':
+					SC.popout.togglePanel(
+						eventArgs.commandElement,
+						function (popoutPanel) {
+							SC.ui.setContents(popoutPanel, [
+								$div({ className: 'BridgeServicePopoutPanel' }, [
+									$h3(SC.res['BridgeService.ProtocolOptionTitle.Text']),
+									$div({ className: 'ProtocolOptionPanel' }, createProtocolInputAndLabel('RDP', true).concat(createProtocolInputAndLabel('VNC', false))),
+									$h3(SC.res['BridgeService.PortTitle.Text']),
+									$div(
+										$input({ type: 'number', step: '1', min: '0', className: 'PortInput' })
+									),
+									$div(
+										SC.command.createCommandButtons([{ commandName: 'AddScanService', className: 'BridgeButton' }]),
+										$p({ className: 'BridgePopoutPanelError Empty' })
+									)
+								])
+							]);
+						},
+						null,
+						true
+					);
+					break;
+				case 'AddScanService':
+					if ($('.PortInput').value == '') {
+						showError(SC.res['BridgeService.PortInputEmptyError.Text']);
+					} else {
+						var port = parseInt($('.PortInput').value);
+						if (isNaN(port)) {
+							showError(SC.res['BridgeService.PortInputValueError.Text']);
+						} else {
+							var optionText = SC.ui.getSelectedRadioButtonValue($('.ProtocolOptionPanel')) + '/' + port;
+							if (SC.ui.findDescendent($('.ScanServicesSelectList'), function (e) { return e.value == optionText; })) {
+								showError(SC.util.formatString(SC.res['BridgeService.PortInputDuplicateErrorFormat.Text'], optionText));
+							} else {
+								SC.ui.addContent(optionsPanel, createScanServiceOption(optionText));
+								SC.popout.hidePanel();
+							}
+						}
+					}
+					break;
+				case 'RemoveScanService':
+					SC.ui.discardElement(SC.ui.findDescendent($('.ScanServicesSelectList'), function (e) { return e.selected; }));
+					SC.css.ensureClass($('.RemoveScanServiceButton'), 'Disabled', true);
+					break;
+				case 'Default':
+					if ($('.ScanServicesSelectList').children.length == 0) {
+						if (!SC.ui.findDescendent(buttonPanel, function (e) { return SC.css.containsClass(e, 'Failure'); }))
+							SC.ui.insertChild(buttonPanel, $p({ className: 'Failure' }, SC.res['BridgeService.EmptyServicesError.Text']), -1);
+					} else {
+						startProbeAndShowAddConnectionsDialog(SC.ui.getSelectedRadioButtonValue($('.ScanTypeOptionsContainer')), Array.prototype.map.call($('.ScanServicesSelectList').children, e => e.value));
+					}
+					break;
+			}
+		}
+	);
+
+	// defaults
+	SC.ui.setContents(optionsPanel,
+		[
+			createScanServiceOption('RDP/3389'),
+			createScanServiceOption('VNC/5900')
+		]
+	);
+};
+
+var startProbeAndShowAddConnectionsDialog = function (scanType, services) {
+	var buttonPanel;
+	var rdpOptionsContainer;
+	var vncOptionsContainer;
+	var errorOptionsContainer;
+	var scanResultsListContainer;
+	var scanResultsOverlay;
+	var resultsToAddListContainer;
+	var resultsToAddOverlay;
+	var domainInput;
+	var userNameInput;
+	var rdpPasswordInput;
+	var vncPasswordInput;
+
+	var sessionInfo = SC.pagedata.get();
+
+	let getAllSelectedRows = function (rowContainer) {
+		return Array.from(rowContainer.children).filter(_ => Array.from(_.children).filter(child => child.checked).length > 0)
+	}
+
+	var updateOptionsDisplayedAndValidateCredentialsButtonVisibility = function () {
+		var rdpContainerWithResultSelected = SC.ui.findDescendantBreadthFirst(scanResultsListContainer, function (e) {
+			return (e._dataItem && e._dataItem.indexOf('RDP') > -1) && SC.ui.findDescendantBreadthFirst(e, function (d) { return d.checked; });
+		});
+
+		var vncContainerWithResultSelected = SC.ui.findDescendantBreadthFirst(scanResultsListContainer, function (e) {
+			return (e._dataItem && e._dataItem.indexOf('VNC') > -1) && SC.ui.findDescendantBreadthFirst(e, function (d) { return d.checked; });
+		});
+
+		if (rdpContainerWithResultSelected && vncContainerWithResultSelected) {
+			SC.css.ensureClass(errorOptionsContainer, 'Hidden', false);
+			SC.css.ensureClass(rdpOptionsContainer, 'Hidden', true);
+			SC.css.ensureClass(vncOptionsContainer, 'Hidden', true);
+			SC.css.ensureClass($('.ValidateCredentialsButton'), 'Disabled', true);
+		} else {
+			SC.css.ensureClass(errorOptionsContainer, 'Hidden', true);
+			SC.css.ensureClass(rdpOptionsContainer, 'Hidden', !rdpContainerWithResultSelected);
+			SC.css.ensureClass(vncOptionsContainer, 'Hidden', !vncContainerWithResultSelected);
+			SC.css.ensureClass($('.ValidateCredentialsButton'), 'Disabled', !(rdpContainerWithResultSelected || vncContainerWithResultSelected));
+		}
+	};
+
+	var createAndInsertMachineAlphabetically = function (container, machineName, element, rowClassName, adjustmentValue) {
+		var index = Array.from(container.getElementsByClassName(rowClassName))
+			.map(_ => _.textContent)
+			.concat(machineName)
+			.sort()
+			.indexOf(machineName);
+
+		if (adjustmentValue)
+			index += adjustmentValue;
+
+		SC.ui.insertChild(container, element, index);
+	};
+
+	var updateScanResults = function (machines) {
+		var createScanResultRow = function (machineName) {
+			var row = $label({ className: 'ScanResultRow' }, [
+				$input({ type: 'checkbox' }),
+				$div({ className: 'HostNameContainer' }, $span(machineName)),
+				$div({ className: 'Warning Hidden', title: SC.res['BridgeService.ConnectionWarning.Text'] })
+			]);
+
+			SC.event.addHandler(row, 'click', function () {
+				SC.css.toggleClass(row, 'Selected');
+				updateOptionsDisplayedAndValidateCredentialsButtonVisibility();
+			});
+
+			return row;
+		};
+
+		for (var i = 0; i < machines.length; i++) {
+			var protocolPortContainer = SC.ui.findDescendantBreadthFirst(scanResultsListContainer, function (node) { return node._dataItem && node._dataItem == machines[i].ProtocolPort });
+			if (!protocolPortContainer) {
+				SC.ui.addContent(
+					scanResultsListContainer,
+					$div({ className: 'ProtocolPortContainer', _dataItem: machines[i].ProtocolPort }, [
+						$div({ className: 'ScanResultHeader' }, $span((machines[i].ProtocolPort))),
+						createScanResultRow(machines[i].MachineName)
+					])
+				);
+			} else {
+				if (!SC.ui.findDescendantBreadthFirst(protocolPortContainer, function (node) { return node.innerText == machines[i].MachineName }))
+					createAndInsertMachineAlphabetically(protocolPortContainer, machines[i].MachineName, createScanResultRow(machines[i].MachineName), 'ScanResultRow', 1); // we add 1 to the index to account for the protocol port heading which is always at index 0
+			}
+		}
+	};
+
+	var endQueryResultsLoop = function (bridgeCommandID, updateUIProc) {
+		SC.service.TryDeleteProbeNetworkEvent(
+			sessionInfo.SessionGroupPath,
+			BridgeService.selectedBridgeServiceSession.SessionID,
+			bridgeCommandID
+		);
+
+		updateUIProc();
+	};
+
+	var beginQueryProbeResultsLoop = function (bridgeCommandID, iteration) {
+		SC.service.QueryProbeResults(
+			sessionInfo.SessionGroupPath,
+			BridgeService.selectedBridgeServiceSession.SessionID,
+			bridgeCommandID,
+			function (probeResult) {
+				updateScanResults(probeResult.Machines);
+				if (!probeResult.Completed && (iteration * BridgeService.probeUpdateInterval) < BridgeService.probeTimeoutMax) {
+					setTimeout(function () { beginQueryProbeResultsLoop(bridgeCommandID, iteration++); }, BridgeService.probeUpdateInterval);
+				} else {
+					endQueryResultsLoop(bridgeCommandID, function () {
+						SC.css.ensureClass(scanResultsOverlay, 'Loading', false);
+					});
+				}
+			}
+		);
+	}
+
+	var updateValidateCredentialsResults = function (machines) {
+		var createValidatedResultRow = function (machine) {
+			var row = $div({ className: 'ValidatedMachineResult', _dataItem: { MachineName: machine.MachineName, ProtocolPort: machine.ProtocolPort, Domain: machine.Domain, Username: machine.Username, EncryptedPassword: machine.EncryptedPassword } }, [
+				$h3(machine.MachineName),
+				$span(machine.ProtocolPort),
+				$span(SC.util.formatString(SC.res['BridgeService.ValidatedRow.Username.Format'], machine.Username)),
+				$span(SC.res['BridgeService.ValidatedRow.Password.Text'])
+			]);
+
+			SC.event.addHandler(row, 'click', function () {
+				SC.css.toggleClass(row, 'Selected');
+				SC.css.ensureClass($('.RemoveConnectionToAddButton'), 'Disabled', resultsToAddListContainer.getElementsByClassName('Selected').length == 0);
+			});
+
+			return row;
+		};
+
+		machines.forEach(function (machine) {
+			var protocolPortContainer = SC.ui.findDescendantBreadthFirst(scanResultsListContainer, function (e) { return e._dataItem && e._dataItem == machine.ProtocolPort; });
+			var matchingScanResultRow = SC.ui.findDescendantBreadthFirst(protocolPortContainer, function (e) { return e.textContent == machine.MachineName; });
+
+			if (machine.Validated) {
+				if (matchingScanResultRow)
+					SC.ui.discardElement(matchingScanResultRow);
+
+				if (protocolPortContainer.getElementsByClassName('ScanResultRow').length == 0)
+					SC.ui.discardElement(protocolPortContainer);
+
+				if (!SC.ui.findDescendent(resultsToAddListContainer, function (e) { return (e._dataItem && e._dataItem.MachineName == machine.MachineName) && (e._dataItem && e._dataItem.ProtocolPort == machine.ProtocolPort); }))
+					createAndInsertMachineAlphabetically(resultsToAddListContainer, machine.MachineName, createValidatedResultRow(machine), 'ValidatedMachineResult');
+			} else if (matchingScanResultRow) {
+				SC.css.ensureClass(SC.ui.findDescendantBreadthFirst(matchingScanResultRow, function (e) { return SC.css.containsClass(e, 'Warning'); }), 'Hidden', false);
+			}
+
+			updateOptionsDisplayedAndValidateCredentialsButtonVisibility();
+		});
+	};
+
+	var beginQueryValidateCredentialsResultsLoop = function (bridgeCommandID, iteration) {
+		SC.service.QueryValidateCredentialsResults(
+			sessionInfo.SessionGroupPath,
+			BridgeService.selectedBridgeServiceSession.SessionID,
+			bridgeCommandID,
+			function (validateCredentialsResult) {
+				updateValidateCredentialsResults(validateCredentialsResult.Machines);
+
+				if (!validateCredentialsResult.Completed && (iteration * 2000) < BridgeService.probeTimeoutMax)
+					setTimeout(function () { beginQueryValidateCredentialsResultsLoop(bridgeCommandID, iteration++); }, 2000);
+				else
+					endQueryResultsLoop(bridgeCommandID, function () {
+						SC.css.ensureClass(scanResultsOverlay, 'Loading', false);
+						SC.css.ensureClass(resultsToAddOverlay, 'Loading', false);
+						updateOptionsDisplayedAndValidateCredentialsButtonVisibility();
+					});
+			}
+		);
+	}
+
+	SC.dialog.showModalDialogRaw(
+		'BridgeAddConnectionsDialog',
+		[
+			SC.dialog.createTitlePanel(SC.res['BridgeService.AddConnections.Title']),
+			SC.dialog.createContentPanel([
+				$div([
+					$h2(SC.res['BridgeService.RawScanResults.Title']),
+					$span(),
+					$h2(SC.res['BridgeService.ConnectionsToAdd.Title'])
+				]),
+				$div({ className: 'MainContentPanel' }, [
+					$div({ className: 'ScanResultsContainer' }, [
+						scanResultsListContainer = $div({ className: 'ListContainer' }),
+						scanResultsOverlay = $div({ className: 'LoadingOverlay' })
+					]),
+					$div({ className: 'OptionsPanel' }, [
+						$p(SC.res['BridgeService.OptionsPanelMessage.Text']),
+						$div({ className: 'OptionsContainer' },
+							rdpOptionsContainer = $div({ className: 'Options Hidden' },
+								$dl([
+									$dt((SC.res['BridgeService.Domain.Label'])),
+									$dd(domainInput = $input({ type: 'text' })),
+									$dt(SC.res['BridgeService.Username.Label']),
+									$dd(userNameInput = $input({ type: 'text' })),
+									$dt(SC.res['BridgeService.Password.Label']),
+									$dd(rdpPasswordInput = $input({ type: 'password' }))
+								]),
+								SC.command.createCommandButtons([{ commandName: 'ShowAdvancedOptions' }])
+							),
+							vncOptionsContainer = $div({ className: 'Options Hidden' },
+								$dl([
+									$dt(SC.res['BridgeService.Password.Label']),
+									$dd(vncPasswordInput = $input({ type: 'password' }))
+								])
+							),
+							errorOptionsContainer = $div({ className: 'Options ErrorOptions Hidden' },
+								$p(SC.res['BridgeService.RDPAndVNCError.Text'])
+							)
+						),
+						$p({ className: 'ValidateCredentialsInstructions' }, SC.res['BridgeService.ValidateCredentialsInstructions.Text']),
+						SC.command.createCommandButtons([{ commandName: 'ValidateCredentials', className: 'BridgeButton ValidateCredentialsButton Disabled', title: SC.res['Command.ValidateCredentials.Title'] }])
+					]),
+					$div({ className: 'ResultsToAddContainer' }, [
+						resultsToAddListContainer = $div({ className: 'ListContainer' }),
+						resultsToAddOverlay = $div({ className: 'LoadingOverlay' })
+					])
+				]),
+				$div({ className: 'FooterPanel' }, [
+					SC.command.createCommandButtons([{ commandName: 'ChangeScanType' }]),
+					$span(),
+					SC.command.createCommandButtons([{ commandName: 'RemoveConnectionToAdd', className: 'RemoveConnectionToAddButton Disabled' }])
+				])
+			]),
+			buttonPanel = SC.dialog.createButtonPanel(SC.res['BridgeService.AddConnections.ButtonText'])
+		],
+		function (eventArgs) {
+			switch (eventArgs.commandName) {
+				case 'ShowAdvancedOptions':
+					var popoutPanelLoadingOverlay;
+					var heightInput;
+					var widthInput;
+					SC.popout.togglePanel(
+						eventArgs.commandElement,
+						function (popoutPanel) {
+							SC.ui.setContents(popoutPanel, [
+								$div({ className: 'BridgeServicePopoutPanel AdvancedOptions' }, [
+									$div(
+										$h3(SC.res['BridgeService.DesktopWidth.Text']),
+										widthInput = $input({ type: 'number', step: '1', min: '0', className: 'BridgeServiceWidthInput' }),
+										$h3(SC.res['BridgeService.DesktopHeight.Text']),
+										heightInput = $input({ type: 'number', step: '1', min: '0', className: 'BridgeServiceHeightInput' })
+									),
+									$div(
+										SC.command.createCommandButtons([{ commandName: 'SaveAdvancedOptions', className: 'BridgeButton' }]),
+										$p({ className: 'BridgePopoutPanelError Empty' })
+									),
+									popoutPanelLoadingOverlay = $div({ className: 'LoadingOverlay' })
+								])
+							]);
+						},
+						null,
+						true
+					);
+					if (SC.popout.getPanel()) {
+						SC.css.ensureClass(popoutPanelLoadingOverlay, 'Loading', true);
+						SC.service.GetSavedRDPDesktopResolution(function (resolution) {
+							if (heightInput && widthInput) { // ensure still exist
+								heightInput.value = resolution.Height;
+								widthInput.value = resolution.Width;
+								SC.css.ensureClass(popoutPanelLoadingOverlay, 'Loading', false);
+							}
+						});
+					}
+					break;
+				case 'SaveAdvancedOptions':
+					if ($('.BridgeServiceHeightInput').value && $('.BridgeServiceWidthInput').value) {
+						var height = parseInt($('.BridgeServiceHeightInput').value);
+						var width = parseInt($('.BridgeServiceWidthInput').value);
+						if (isNaN(height) || isNaN(width) || height < 0 || width < 0)
+							showError(SC.res['BridgeService.InvalidResolutionError.Text']);
+						else {
+							SC.service.UpdateRDPDesktopResolution(height, width);
+							SC.popout.hidePanel();
+						}
+					} else {
+						showError(SC.res['BridgeService.EmptyResolutionError.Text']);
+					}
+					break;
+				case 'ChangeScanType':
+					SC.service.CancelProbingOrValidationOperation(sessionInfo.SessionGroupPath, BridgeService.selectedBridgeServiceSession.SessionID);
+					showScanNetworkDialog();
+					break;
+				case 'ValidateCredentials':
+					Array.from(scanResultsListContainer.getElementsByClassName('Warning')).forEach(function (e) { SC.css.ensureClass(e, 'Hidden', true) });
+
+					// todo we need to commonize finding selected rows within this extension since big changes with css can affect ui easily
+					var validationGroups = Array.from(scanResultsListContainer.getElementsByTagName("input"))
+						.filter(_ => _.checked)
+						.map(
+							_ => {
+								var scanResultRow = _.parentElement;
+								return {
+									protocolPortPair: scanResultRow.parentElement._dataItem,
+									hostName: scanResultRow.textContent,
+								};
+							}
+						);
+
+					if (validationGroups.length > 0) { // failsafe; validate credentials button should never be enabled if valid scan results are selected
+						var isRdp = validationGroups[0].protocolPortPair.includes('RDP');
+
+						SC.css.ensureClass(resultsToAddOverlay, 'Loading', true);
+						SC.css.ensureClass(scanResultsOverlay, 'Loading', true);
+						SC.css.ensureClass($('.ValidateCredentialsButton'), 'Disabled', true);
+
+						// vnc only needs correct password so we don't care that we're passing in rdp specific stuff as well since they're not used by vnc
+						SC.service.ValidateCredentials(
+							sessionInfo.SessionGroupPath,
+							BridgeService.selectedBridgeServiceSession.SessionID,
+							domainInput.value,
+							userNameInput.value,
+							isRdp ? rdpPasswordInput.value : vncPasswordInput.value,
+							validationGroups,
+							function (bridgeCommandID) {
+								if (bridgeCommandID === BridgeService.nullGuid)
+									console.log(SC.res['BridgeService.FailedToStartValidateCredentials.Message']);
+								else
+									beginQueryValidateCredentialsResultsLoop(bridgeCommandID, 1);
+							}
+						);
+					}
+					break;
+				case 'RemoveConnectionToAdd':
+					var selectedElements = Array.from(resultsToAddListContainer.getElementsByClassName('Selected'));
+					updateScanResults(selectedElements.map(_ => { return { ProtocolPort: _._dataItem.ProtocolPort, MachineName: _._dataItem.MachineName } }));
+					selectedElements.forEach(SC.ui.discardElement);
+					SC.css.ensureClass($('.RemoveConnectionToAddButton'), 'Disabled', true);
+					break;
+				case 'Default':
+					if (resultsToAddListContainer.children.length == 0) {
+						if (!SC.ui.findDescendent(buttonPanel, function (e) { return SC.css.containsClass(e, 'Failure'); }))
+							SC.ui.insertChild(buttonPanel, $p({ className: 'Failure' }, SC.res['BridgeService.EmptyConnectionsToAddError.Text']), -1);
+					} else {
+						SC.service.GetSavedRDPDesktopResolution(function (resolution) {
+							var sessionClientConnectionInfos = [];
+
+							Array.from(resultsToAddListContainer.children).forEach(connectionToAdd => {
+								var protocolPortArray = connectionToAdd._dataItem.ProtocolPort.split('/');
+
+								sessionClientConnectionInfos.push({
+									Protocol: BridgeService.types.SupportedProtocol[protocolPortArray[0]],
+									Host: connectionToAdd._dataItem.MachineName,
+									Port: parseInt(protocolPortArray[1]),
+									Display: 0,
+									ViewOnly: false,
+									DesktopWidth: resolution.Width,
+									DesktopHeight: resolution.Height,
+									Domain: connectionToAdd._dataItem.Domain,
+									Username: connectionToAdd._dataItem.Username,
+									EncryptedPassword: connectionToAdd._dataItem.EncryptedPassword
+								});
+							});
+
+							SC.service.StartEditOrAddSessionClientConnectionInfos(
+								sessionInfo.SessionGroupPath,
+								BridgeService.selectedBridgeServiceSession.SessionID,
+								sessionClientConnectionInfos,
+								BridgeService.nullGuid,
+								false,
+								null,
+								false,
+								startRefreshBridgeServiceConfiguration
+							);
+
+							SC.dialog.hideModalDialog();
+						});
+					}
+					break;
+			}
+		},
+		null,
+		function () {
+			SC.service.CancelProbingOrValidationOperation(sessionInfo.SessionGroupPath, BridgeService.selectedBridgeServiceSession.SessionID);
+		}
+	);
+
+	SC.css.ensureClass(scanResultsOverlay, 'Loading', true);
+
+	SC.service.StartProbeNetwork(
+		sessionInfo.SessionGroupPath,
+		BridgeService.selectedBridgeServiceSession.SessionID,
+		scanType,
+		services,
+		function (bridgeCommandID) {
+			if (bridgeCommandID === BridgeService.nullGuid)
+				console.log(SC.res['BridgeService.ProbePanel.FailedToStartFindingMachines.Message']);
+			else
+				beginQueryProbeResultsLoop(bridgeCommandID, 1);
+		}
+	);
+};
+
+var showEditOrAddClientConnectionModal = function (defaultProtocolAsEnumVal, defaultHost, defaultPort, defaultDisplay, defaultDesktopWidth, defaultDesktopHeight, defaultViewOnly, defaultDomain, defaultUsername, defaultPassword, isEditOrAdd, sessionClientConnectionKey, hideAfterServiceCall, loadingProc, completeProc) {
+	var buttonPanel,
+		hostInput,
+		portInput,
+		displayInput,
+		desktopWidthInput,
+		desktopHeightInput,
+		viewOnlySelector,
+		domainInput,
+		usernameInput,
+		passwordUpdated;
+
+	var createNewViewOnlySelector = function (selected, isInitiallyDisabled) {
+		return $select({ name: 'ViewOnly', title: SC.res['BridgeService.Setting.RfbOnlyMessage'], disabled: isInitiallyDisabled }, [
+			$option({
+				label: 'false',
+				value: false
+			}, 'false'),
+			$option({
+				label: 'true',
+				value: true,
+				selected: selected
+			}, 'true')
+		]);
+	};
+
+	var createNewProtocolSelector = function (selectedProtocolAsEnum) {
+		return $select({ name: 'Protocol' }, [
+			$option({
+				label: SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, BridgeService.types.SupportedProtocol.VNC),
+				value: BridgeService.types.SupportedProtocol.VNC,
+				selected: selectedProtocolAsEnum == BridgeService.types.SupportedProtocol.VNC ? 'selected' : ''
+			}, SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, BridgeService.types.SupportedProtocol.VNC)),
+			$option({
+				label: SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, BridgeService.types.SupportedProtocol.RDP),
+				value: BridgeService.types.SupportedProtocol.RDP,
+				selected: selectedProtocolAsEnum == BridgeService.types.SupportedProtocol.RDP ? 'selected' : ''
+			}, SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, BridgeService.types.SupportedProtocol.RDP))
+		]);
+	};
+
+	var protocolSelector = createNewProtocolSelector(defaultProtocolAsEnumVal);
+	SC.event.addHandler(protocolSelector, 'change', function () {
+		if (SC.ui.getSelectedOptions(protocolSelector)[0].value == BridgeService.types.SupportedProtocol.VNC) {
+			Array.prototype.forEach.call(document.querySelectorAll('.RdpOnlyParameter'),
+				function (connectionParameterElement) {
+					SC.css.addClass(connectionParameterElement, 'Empty');
+				});
+
+			Array.prototype.forEach.call(document.querySelectorAll('.RfbOnlyParameter'),
+				function (connectionParameterElement) {
+					SC.css.removeClass(connectionParameterElement, 'Empty');
+				});
+
+			portInput.value = BridgeService.defaultRfbPort;
+		} else if (SC.ui.getSelectedOptions(protocolSelector)[0].value == BridgeService.types.SupportedProtocol.RDP) {
+			Array.prototype.forEach.call(document.querySelectorAll('.RfbOnlyParameter'),
+				function (connectionParameterElement) {
+					SC.css.addClass(connectionParameterElement, 'Empty');
+				});
+
+			Array.prototype.forEach.call(document.querySelectorAll('.RdpOnlyParameter'),
+				function (connectionParameterElement) {
+					SC.css.removeClass(connectionParameterElement, 'Empty');
+				});
+
+			portInput.value = BridgeService.defaultRdpPort;
+		}
+	});
+
+	var existingAuthenticationSelectorInput = $select({},
+		[$option({ value: BridgeService.nullGuid }, SC.res['BridgeService.DoNotUseExistingAuthentication'])].concat(
+			Array.from($('.DataTable.BridgeDataTable').rows).map(function (row) {
+				return $option({ value: row._dataItem.SessionClientConnectionKey },
+					SC.util.formatString('{0} ({1}:{2})',
+						row._dataItem.Host,
+						SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, row._dataItem.Protocol),
+						getCredentialStringFromClientConnectionInfo(row._dataItem)));
+			})));
+
+	SC.event.addHandler(existingAuthenticationSelectorInput, 'change', function () {
+		Array.prototype.forEach.call(document.querySelectorAll('.CredentialsInput'),
+			function (credentialsInput) {
+				SC.ui.setVisible(credentialsInput, SC.ui.getSelectedOptions(existingAuthenticationSelectorInput)[0].value == BridgeService.nullGuid);
+			}
+		);
+	});
+
+	var passwordInput = $input({ className: 'CredentialsInput', type: 'password', value: defaultPassword });
+	SC.event.addHandler(passwordInput, 'change', function () {
+		passwordUpdated = true;
+	});
+
+	SC.dialog.showModalDialogRaw(
+		'BridgeEditClientConnection',
+		[
+			SC.dialog.createTitlePanel(SC.res['BridgeService.' + (isEditOrAdd ? 'EditClientConnection' : 'AddNewConnection') + 'Panel.Title']),
+			SC.dialog.createContentPanel([
+				$div({ className: 'BridgeServiceAddClientConnectionInfoContainer Start' },
+					[
+						$dl([
+							$dt(SC.res['BridgeService.Protocol.Label'] + ':'),
+							$dd(protocolSelector),
+							$dt(SC.res['BridgeService.Host.Label'] + ':'),
+							$dd(hostInput = $input({ type: 'text', value: defaultHost })),
+							$dt(SC.res['BridgeService.Port.Label'] + ':'),
+							$dd(portInput = $input({ type: 'number', value: defaultPort })),
+							$dt({ _classNameMap: { RfbOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.VNC } }, SC.res['BridgeService.Display.Label']),
+							$dd({ _classNameMap: { RfbOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.VNC } },
+								[displayInput = $input({ type: 'number', value: defaultDisplay })]),
+							$dt({ _classNameMap: { RdpOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } }, SC.res['BridgeService.DesktopWidth.Label']),
+							$dd({ _classNameMap: { RdpOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } },
+								[desktopWidthInput = $input({ type: 'number', value: defaultDesktopWidth })]),
+							$dt({ _classNameMap: { RdpOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } }, SC.res['BridgeService.DesktopHeight.Label']),
+							$dd({ _classNameMap: { RdpOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } },
+								[desktopHeightInput = $input({ type: 'number', value: defaultDesktopHeight })]),
+							$dt({ _classNameMap: { RfbOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.VNC } }, SC.res['BridgeService.ViewOnly.Label']),
+							$dd({ _classNameMap: { RfbOnlyParameter: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.VNC } },
+								[viewOnlySelector = createNewViewOnlySelector(defaultViewOnly, defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.VNC)]),
+							$dt({ _classNameMap: { RdpOnlyParameter: true, CredentialsInput: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } }, SC.res['BridgeService.Domain.Label']),
+							$dd({ _classNameMap: { RdpOnlyParameter: true, CredentialsInput: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } },
+								[domainInput = $input({ type: 'text', value: defaultDomain })]),
+							$dt({ _classNameMap: { RdpOnlyParameter: true, CredentialsInput: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } }, SC.res['BridgeService.Username.Label']),
+							$dd({ _classNameMap: { RdpOnlyParameter: true, CredentialsInput: true, Empty: defaultProtocolAsEnumVal != BridgeService.types.SupportedProtocol.RDP } },
+								[usernameInput = $input({ type: 'text', value: defaultUsername })]),
+							$dt({ className: 'CredentialsInput' }, SC.res['BridgeService.Password.Label']),
+							$dd(passwordInput),
+							$dt(SC.res['BridgeService.UseExistingAuthentication.Label']),
+							$dd(existingAuthenticationSelectorInput)
+						])
+					])
+			]),
+			buttonPanel = SC.dialog.createButtonPanel(SC.res['BridgeService.' + (isEditOrAdd ? 'EditClientConnection' : 'AddNewConnection') + 'Panel.Button.Text'])
+		],
+		function () {
+			if (loadingProc)
+				loadingProc(buttonPanel);
+
+			SC.service.StartEditOrAddSingleSessionClientConnectionInfo(
+				SC.pagedata.get().SessionGroupPath,
+				BridgeService.selectedBridgeServiceSession.SessionID,
+				{
+					Protocol: SC.ui.getSelectedOptions(protocolSelector)[0].value,
+					Host: hostInput.value,
+					Port: portInput.value,
+					Display: displayInput.value,
+					ViewOnly: SC.ui.getSelectedOptions(viewOnlySelector)[0].value,
+					DesktopWidth: desktopWidthInput.value,
+					DesktopHeight: desktopHeightInput.value,
+					Domain: domainInput.value,
+					Username: usernameInput.value
+				},
+				passwordInput.value,
+				passwordUpdated || SC.ui.getSelectedOptions(existingAuthenticationSelectorInput)[0].value != BridgeService.nullGuid,
+				SC.ui.getSelectedOptions(existingAuthenticationSelectorInput)[0].value,
+				isEditOrAdd,
+				sessionClientConnectionKey,
+				function (bridgeCommandID) {
+					if (completeProc)
+						completeProc(bridgeCommandID, buttonPanel);
+
+					startRefreshBridgeServiceConfiguration();
+				}
+			);
+
+			if (hideAfterServiceCall)
+				SC.dialog.hideModalDialog();
+		}
+	);
+};
+
+var promptAddSingleBridgeConnection = function () {
+	SC.service.GetSavedRDPDesktopResolution(
+		function (resolution) {
+			showEditOrAddClientConnectionModal(
+				BridgeService.types.SupportedProtocol.VNC,
+				'',
+				BridgeService.defaultRfbPort,
+				0,
+				resolution.Width,
+				resolution.Height,
+				false,
+				'',
+				'',
+				'',
+				false,
+				null,
+				true
+			);
+		}
+	);
+};
+
+var startTryEditBridgeSessionName = function (bridgeServiceSessionID, bridgeCommandID, timeout, success, failure) {
+	var sessionInfo = SC.pagedata.get();
+
+	SC.service.TryEditBridgeSessionName(
+		sessionInfo.SessionGroupPath,
+		bridgeServiceSessionID,
+		bridgeCommandID,
+		function (sessionUpdated) {
+			if (!sessionUpdated && (timeout * BridgeService.commandTimeoutMultiplier) < BridgeService.commandTimeoutMax) {
+				setTimeout(function () {
+					startTryEditBridgeSessionName(
+						bridgeServiceSessionID,
+						bridgeCommandID,
+						timeout * BridgeService.commandTimeoutMultiplier,
+						success,
+						failure);
+				},
+					timeout * BridgeService.commandTimeoutMultiplier
+				);
+			}
+			else if (!sessionUpdated)
+				failure();
+			else
+				success();
+		});
+};
+
+var promptEditClientConnection = function (bridgeServiceSessionID, sessionClientConnectionInfo) {
+	showEditOrAddClientConnectionModal(
+		sessionClientConnectionInfo.Protocol,
+		sessionClientConnectionInfo.Host,
+		sessionClientConnectionInfo.Port,
+		sessionClientConnectionInfo.Display,
+		sessionClientConnectionInfo.DesktopWidth,
+		sessionClientConnectionInfo.DesktopHeight,
+		false,
+		sessionClientConnectionInfo.Domain,
+		sessionClientConnectionInfo.Username,
+		SC.res['BridgeService.DummyPassword'],
+		true,
+		sessionClientConnectionInfo.SessionClientConnectionKey,
+		false,
+		function (buttonPanel) {
+			SC.css.ensureClass(buttonPanel, 'Loading', true);
+		},
+		function (bridgeCommandID, buttonPanel) {
+			if (bridgeCommandID !== BridgeService.nullGuid) {
+				setTimeout(function () {
+					startTryEditBridgeSessionName(
+						bridgeServiceSessionID,
+						bridgeCommandID,
+						BridgeService.commandTimeoutInitial,
+						function () {
+							SC.dialog.hideModalDialog();
+						},
+						function () {
+							SC.css.ensureClass(buttonPanel, 'Loading', false);
+							SC.dialog.setButtonPanelError(buttonPanel, { message: SC.res['BridgeService.EditClientConnectionPanel.ErrorMessage'] });
+						}
+					);
+				},
+					BridgeService.commandTimeoutInitial
+				);
+			} else {
+				SC.css.ensureClass(buttonPanel, 'Loading', false);
+				SC.dialog.setButtonPanelError(buttonPanel, { message: SC.res['BridgeService.EditClientConnectionPanel.ErrorMessage'] });
+			}
+		}
+	);
+};
+
+var getTransportStringFromClientConnectionInfo = function (clientConnectionInfo) {
+	var portDisplay;
+
+	if (clientConnectionInfo.Protocol == BridgeService.types.SupportedProtocol.VNC) {
+		portDisplay = clientConnectionInfo.Port == BridgeService.defaultRfbPort ? SC.util.formatString('{0}(default)', clientConnectionInfo.Port) : clientConnectionInfo.Port;
+		var displayDisplay = SC.util.formatString('Display{0}', clientConnectionInfo.Display);
+		var viewOnlyDisplay = clientConnectionInfo.ViewOnly ? '/ViewOnly' : '';
+
+		return SC.util.formatString('{0}/{1}/{2}{3}',
+			SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, clientConnectionInfo.Protocol),
+			portDisplay,
+			displayDisplay,
+			viewOnlyDisplay
+		);
+	} else if (clientConnectionInfo.Protocol == BridgeService.types.SupportedProtocol.RDP) {
+		portDisplay = clientConnectionInfo.Port == BridgeService.defaultRdpPort ? SC.util.formatString('{0}(default)', clientConnectionInfo.Port) : clientConnectionInfo.Port;
+		var displaySizeDisplay = SC.util.formatString('{0}x{1}', clientConnectionInfo.DesktopWidth, clientConnectionInfo.DesktopHeight);
+
+		return SC.util.formatString('{0}/{1}/{2}',
+			SC.util.getEnumValueName(BridgeService.types.SupportedProtocol, clientConnectionInfo.Protocol),
+			portDisplay,
+			displaySizeDisplay
+		);
+	}
+};
+
+var getCredentialStringFromClientConnectionInfo = function (clientConnectionInfo) {
+	if (clientConnectionInfo.Protocol == BridgeService.types.SupportedProtocol.VNC)
+		return clientConnectionInfo.EncryptedPassword.length > 0 ? SC.res['BridgeService.DummyPassword.Text'] : "";
+	else if (clientConnectionInfo.Protocol == BridgeService.types.SupportedProtocol.RDP) {
+		if (!SC.util.isNullOrEmpty(clientConnectionInfo.Domain) && !SC.util.isNullOrEmpty(clientConnectionInfo.Username))
+			return SC.util.formatString('{0}\\{1}', clientConnectionInfo.Domain, clientConnectionInfo.Username);
+		else if (!SC.util.isNullOrEmpty(clientConnectionInfo.Domain))
+			return clientConnectionInfo.Domain;
+		else if (!SC.util.isNullOrEmpty(clientConnectionInfo.Username))
+			return clientConnectionInfo.Username;
+		else
+			return clientConnectionInfo.EncryptedPassword.length > 0 ? SC.res['BridgeService.DummyPassword.Text'] : "";
+	}
+};
+
+var populateBridgeTabWithBridgeServiceConfiguration = function (session) {
+	// set body of table
+	if ($('.BridgeDataTableBody') && BridgeService.bridgeServiceConfigurations && BridgeService.bridgeServiceConfigurations.length > 0) {
+		SC.css.ensureClass($('.BridgeDataTableContainer'), 'Loading', false);
+
+		if (BridgeService.bridgeServiceConfigurations[0].Data.SessionClientConnectionInfos.length > 0) {
+			SC.ui.clear($('.BridgeDataTableMessageContainer')); // there are 2 possible paths to here and only one of them clears it beforehand; this ensures that this is cleared
+			SC.ui.setContents($('.BridgeDataTableBody'),
+				[
+					BridgeService.bridgeServiceConfigurations[0].Data.SessionClientConnectionInfos.map(
+						function (sessionClientConnectionInfo) {
+							var createEditBridgeSessionButtons = function (bridgeSession) {
+								return selectedBridgeServiceHasPermission(SC.types.SessionPermissions.Edit)
+									? $td({ className: 'ActionCell' }, [SC.command.createCommandButtons([{ commandName: 'EditBridgeSession', commandArgument: bridgeSession }])])
+									: null;
+							};
+
+							return $tr({ _dataItem: sessionClientConnectionInfo },
+								[
+									createEditBridgeSessionButtons(session),
+									$td(
+										$div([
+											$h3(sessionClientConnectionInfo.Host),
+											$p(getTransportStringFromClientConnectionInfo(sessionClientConnectionInfo)),
+											$p(getCredentialStringFromClientConnectionInfo(sessionClientConnectionInfo))
+										])
+									)
+								]);
+						})
+				]);
+		}
+		else {
+			SC.ui.setInnerText($('.BridgeDataTableMessageContainer'), SC.res['BridgeService.NoConnectionsToShow.Text']);
+		}
+	}
+};
+
+});</script>
+<script>SC.extension.addInitializeProc('07979477-b058-44c4-9829-035b041eeb01', function (extensionContext) {
+/*
+http://forum.screenconnect.com/yaf_postsm33047_Extension--Command-Toolbox.aspx#post33047
+multi line saved commands
+demand administer permission to modify settings
+*/
+
+SC.event.addGlobalHandler(SC.event.PreRender, function (eventArgs) {
+	if (SC.context.pageType == 'HostPage') {
+		SC.util.includeStyleSheet(extensionContext.baseUrl + 'CommandToolboxStyle.css');
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	switch (eventArgs.area) {
+		case 'HostDetailPopoutPanel':
+			eventArgs.buttonDefinitions.push(
+				{ commandName: 'Select', commandArgument: 'OpenCommandToolbox', text: SC.res['CommandToolbox.DetailPopout.Modal'] }
+			);
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'SaveCommandSettings':
+			console.log("within setting save");
+			$('saveStatus').innerHTML = SC.res['CommandToolbox.Modal.Saving'];
+			var position = $('commandSelector').selectedIndex + 1;
+			var commandName = $('commandSelector').options[$('commandSelector').selectedIndex].text;
+			SC.service.SaveExtensionCommandSetting(commandName, position, commandText.value, function (ret) {
+				$('saveStatus').innerHTML = SC.res['CommandToolbox.Modal.Saved'];
+				$('saveStatus').className = 'Success';
+			});
+			break;
+	}
+	switch (eventArgs.commandArgument) {
+		case 'OpenCommandToolbox':
+			SC.dialog.showModalButtonDialog('CommandToolbox', SC.res['CommandToolbox.Modal.Title'], SC.res['CommandToolbox.Modal.RunCommand'], 'Default',
+				function (container) {
+					SC.ui.addElement(container, 'P', SC.res['CommandToolbox.Modal.Instruction']);
+					var selector = SC.ui.createElement('SELECT', { id: 'commandSelector' });
+					var commandText = SC.ui.createElement('TextArea', { id: 'commandText' });
+					var commandIndex = [];
+					var commands = getCommandNamesAndValues();
+
+					var saveCommand = SC.ui.createElement('INPUT', { id: 'saveCommand', type: 'BUTTON', value: SC.res['CommandToolbox.Modal.SaveButton'] });
+					var saveStatusField = SC.ui.createElement('SPAN', { id: 'saveStatus' });
+
+					Array.prototype.forEach.call(commands, function (c) {
+						var option = document.createElement('option');
+						option.value = c.value.toString();
+						option.text = c.name;
+						commandIndex.push(c.index.toString());
+						selector.appendChild(option);
+					});
+
+					selector.onchange = function () {
+						commandText.value = getSelectedItemText();
+					};
+
+					if (commands[0])
+						commandText.value = commands[0].value;
+
+					SC.ui.addContent(container, selector);
+					SC.ui.addContent(container, commandText);
+
+					//this could be used to enforce pagedata update to recreate extensioncontext settings after setting change
+					//SC.command.createCommandButtons(container, 'SaveExtensionSettings');
+					/*
+					SC.ui.addContent(
+						container, 
+						SC.command.createCommandButtons(
+							[{
+								commandName: 'SaveCommandSettings', 
+								text: SC.res['CommandToolbox.Modal.SaveButton'],
+							}]
+						)
+					);
+					*/
+					SC.ui.addContent(container, saveCommand);
+					SC.ui.addContent(container, saveStatusField);
+
+
+					saveCommand.onclick = function () {
+						$('saveStatus').innerHTML = SC.res['CommandToolbox.Modal.Saving'];
+						var position = commandIndex[$('commandSelector').selectedIndex];
+						var commandName = $('commandSelector').options[$('commandSelector').selectedIndex].text;
+						SC.service.SaveExtensionCommandSetting(commandName, position, commandText.value, function (ret) {
+							$('saveStatus').innerHTML = SC.res['CommandToolbox.Modal.Saved'];
+							$('saveStatus').className = 'Success';
+						});
+					};
+
+				},
+				function (eventArgs) {
+					var allRows = "";
+					if ($('.DetailTable') === null)
+						allRows = $('detailTable').rows;
+					else
+						allRows = $('.DetailTable').rows;
+					var commandRows = Array.prototype.filter.call(allRows, function (r) { return SC.ui.isChecked(r) || SC.ui.isSelected(r); });
+					var sessions = Array.prototype.map.call(commandRows, function (r) { return r._dataItem; });
+					var sessionIDs = Array.prototype.map.call(sessions, function (s) { return s.SessionID; });
+
+					var chosenCommand = $('commandText').value;
+
+					window.addEventToSessions(window.getSessionGroupUrlPart()[0],
+						SC.types.SessionType.Access,
+						sessionIDs,
+						SC.types.SessionEventType.QueuedCommand,
+						null,
+						chosenCommand,
+						false,
+						false,
+						true
+					);
+					SC.dialog.hideModalDialog();
+				});
+			break;
+	}
+});
+
+function getSelectedItemText() {
+	return $('commandSelector').options[$('commandSelector').selectedIndex].value;
+}
+
+//this is atrocious, just us a js object or something
+function getCommandNamesAndValues() {
+	var commandsToReturn = [];
+	var commands = [
+		{ 'name': extensionContext.settingValues.CommandName1, 'value': extensionContext.settingValues.Command1, 'index': 1 },
+		{ 'name': extensionContext.settingValues.CommandName2, 'value': extensionContext.settingValues.Command2, 'index': 2 },
+		{ 'name': extensionContext.settingValues.CommandName3, 'value': extensionContext.settingValues.Command3, 'index': 3 },
+		{ 'name': extensionContext.settingValues.CommandName4, 'value': extensionContext.settingValues.Command4, 'index': 4 },
+		{ 'name': extensionContext.settingValues.CommandName5, 'value': extensionContext.settingValues.Command5, 'index': 5 },
+		{ 'name': extensionContext.settingValues.CommandName6, 'value': extensionContext.settingValues.Command6, 'index': 6 },
+		{ 'name': extensionContext.settingValues.CommandName7, 'value': extensionContext.settingValues.Command7, 'index': 7 },
+		{ 'name': extensionContext.settingValues.CommandName8, 'value': extensionContext.settingValues.Command8, 'index': 8 },
+		{ 'name': extensionContext.settingValues.CommandName9, 'value': extensionContext.settingValues.Command9, 'index': 9 },
+		{ 'name': extensionContext.settingValues.CommandName10, 'value': extensionContext.settingValues.Command10, 'index': 10 },
+		{ 'name': extensionContext.settingValues.CommandName11, 'value': extensionContext.settingValues.Command11, 'index': 11 },
+		{ 'name': extensionContext.settingValues.CommandName12, 'value': extensionContext.settingValues.Command12, 'index': 12 },
+		{ 'name': extensionContext.settingValues.CommandName13, 'value': extensionContext.settingValues.Command13, 'index': 13 },
+		{ 'name': extensionContext.settingValues.CommandName14, 'value': extensionContext.settingValues.Command14, 'index': 14 },
+		{ 'name': extensionContext.settingValues.CommandName15, 'value': extensionContext.settingValues.Command15, 'index': 15 },
+		{ 'name': extensionContext.settingValues.CommandName16, 'value': extensionContext.settingValues.Command16, 'index': 16 },
+		{ 'name': extensionContext.settingValues.CommandName17, 'value': extensionContext.settingValues.Command17, 'index': 17 },
+		{ 'name': extensionContext.settingValues.CommandName18, 'value': extensionContext.settingValues.Command18, 'index': 18 },
+		{ 'name': extensionContext.settingValues.CommandName19, 'value': extensionContext.settingValues.Command19, 'index': 19 },
+		{ 'name': extensionContext.settingValues.CommandName20, 'value': extensionContext.settingValues.Command20, 'index': 20 }
+	];
+	Array.prototype.forEach.call(commands, function (c) {
+		if (c.value !== '') {
+			commandsToReturn.push(c);
+		}
+	});
+
+	return commandsToReturn;
+}
+});</script>
+<script>SC.extension.addInitializeProc('fc234f0e-2e8e-4a1f-b977-ba41b14031f7', function (extensionContext) {
+// Add: Options | Help
+var x=extensionContext.baseUrl.split('/').splice(-2)[0];
+SC.res['HelpPanel.Link'+x+'.Url']="https://docs.connectwise.com/ConnectWise_Automate/ConnectWise_Automate_Documentation/080/020/020?psa=1";
+SC.event.addGlobalHandler(SC.event.QueryCommandButtonState,function(e){if(e.commandElement._commandName=='EditExtensionSettings'&&e.commandContext.extensionInfo.ExtensionID==x){SC.ui.addElement(e.target.parentElement,'A',{_commandName:'NavigateHelpLink',_commandArgument:x,_innerText:SC.res['Command.Help.Text'].replace(' ▽','')});}});
+
+});</script>
+<script>SC.extension.addInitializeProc('fc234f0e-2e8e-4a1f-b977-ba41b14031f7', function (extensionContext) {
+/*
+    The following is currently ripped from the Hosted Integration Template per Control
+    Potential to one day not need this and use some core functionality
+
+    File will hide the UI and display the fourth column only
+*/
+var sendCommandToParent = function (commandName, commandData) {
+    if (commandName)
+        window.parent.postMessage({ _internalCommand: commandName, _internalCommandData: commandData ? commandData : {} }, '*');
+};
+
+SC.event.addGlobalHandler(SC.event.PreRender, function () {
+    window.addEventListener('message', function (eventArgs) {
+        SC.util.includeStyleSheet(extensionContext.baseUrl + 'LiveData/livedata.css');
+        switch (eventArgs.data._externalCommand) {
+            case 'RenderSessionDetailsFullWidthCommand':
+                var applicablePaths = ['/', '/Guest', '/Host', '/Login'];
+                if (!applicablePaths.includes(window.location.pathname))
+                    break;
+
+                var elementsToHide = [
+                    $('.HeaderPanel'),
+                    $('.GlobalBar'),
+                    $('.NavigationPanel'),
+                    $('.MasterPanel'),
+                    $('.MainDetailHeaderPanel'),
+                    $('.MainDetailPanel'),
+                    $('.ToggleDetailPanelButton'),
+                ];
+
+                for (var i = 0; i < elementsToHide.length; i++)
+                    if (elementsToHide[i])
+                        SC.css.ensureClass(elementsToHide[i], 'HiddenElement', true);
+
+                var outerPanel = $('.OuterPanel');
+                var mainPanel = $('.MainPanel');
+                var subDetailHeader = $('.SubDetailHeaderPanel');
+
+                if (outerPanel)
+                    SC.css.ensureClass(outerPanel, 'OuterPanelOverride', true);
+
+                if (mainPanel)
+                    SC.css.ensureClass(mainPanel, 'GridOverride', true);
+
+                if (subDetailHeader)
+                    SC.css.ensureClass(subDetailHeader, 'FullSizeHeaderElement', true);
+
+                var notifyPaths = ['/', '/Guest'];
+
+                if (notifyPaths.includes(window.location.pathname))
+                    sendCommandToParent('OnPreRenderComplete');
+
+                break;
+
+            case 'LoadSessionCommand':
+                var sessionID = eventArgs.data._externalCommandData;
+
+                if (sessionID) {
+                    // call our LiveDataService
+                    SC.service.GetSessionDetailsUrl(
+                        sessionID,
+                        function (url) {
+                            if (url)
+                                window.location.href = url;
+                        }
+                    );
+                }
+
+                sendCommandToParent('OnLoadSessionComplete');
+                break;
+        }
+    });
+
+    sendCommandToParent('OnPreRender');
+});
+
+});</script>
+<script>SC.extension.addInitializeProc('93cceb0c-f5cd-4d7b-abee-e6718bc624c3', function (extensionContext) {
+SC.event.addGlobalHandler(SC.event.PreRender, function (eventArgs) {
+	if (
+		!extensionContext.settingValues.IsSetup &&
+		SC.context.pageType === 'AdministrationPage' &&
+		SC.context.tabKeys[SC.context.tabIndex] === 'Extensions'
+	) {
+		SC.service.GetConnectWiseApiSettings(function (cwApiSettings) {
+			SC.dialog.showModalDialogRaw('EditExtensionSettings', [
+				SC.dialog.createTitlePanel(SC.res['ConnectWiseManage.EditExtensionSettings.Title']),
+				SC.dialog.createContentPanel([
+					$table({ className: 'DataTable' }, [
+						$thead(
+							$tr([
+								$th(SC.res['ExtensionsPanel.EditSettings.KeyHeaderText']),
+								$th(SC.res['ExtensionsPanel.EditSettings.DescriptionHeaderText']),
+								$th(SC.res['ExtensionsPanel.EditSettings.ValueHeaderText']),
+							]),
+						),
+						$tbody([
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ManageUrl.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ManageUrl.Text']),
+								$td(SC.ui.createTextBox({ id: 'cwUrlBox', value: cwApiSettings['CwUrl'], placeholder: SC.res['ConnectWiseManage.EditExtensionSettings.ManageUrl.PlaceholderText'] }, false)),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ControlUrl.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ControlUrl.Text']),
+								$td(SC.ui.createTextBox({ id: 'scUrlBox', value: cwApiSettings['ScServerUrl'] }, false)),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.Company.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwCompany.Text']),
+								$td(SC.ui.createTextBox({ id: 'cwCompanyNameBox', value: cwApiSettings['CwCompanyName'], placeholder: SC.res['ConnectWiseManage.EditExtensionSettings.Company.PlaceholderText'] }, false)),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ManageApi.PublicKey.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwPublicKey.Text']),
+								$td(SC.ui.createTextBox({ id: 'cwPublicApiKeyBox', value: cwApiSettings['CwApiPublicKey'] }, false)),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.ManageApi.PrivateKey.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwPrivateKey.Text']),
+								$td(SC.ui.createTextBox({ id: 'cwPrivateApiKeyBox', value: cwApiSettings['CwApiPrivateKey'] }, false)),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwTimeEntryFlag.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwTimeEntryFlag.Text']),
+								$td($input({ id: 'cwTimeEntryFlag', type: 'checkbox', checked: cwApiSettings['CwTimeEntryFlag'] === '1' })),
+							]),
+							['Chat', 'Events', 'ConnectionEvents', 'Notes'].map(it => 
+								$tr([
+									$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwSession' + it + 'PostType.LabelText']),
+									$td(SC.res['ConnectWiseManage.EditExtensionSettings.CwSession' + it + 'PostType.Text']),
+									$td([
+										$input({ id: 'cwSession' + it + 'AsNote', type: 'checkbox', checked: Number(cwApiSettings['CwSession' + it + 'PostType']) & 1 }), $label('Note', { for: 'cwSession' + it + 'AsNote' }),
+										$input({ id: 'cwSession' + it + 'AsAttachment', type: 'checkbox', checked: Number(cwApiSettings['CwSession' + it + 'PostType']) & 2 }), $label('Attachment', { for: 'cwSession' + it + 'AsAttachment' }),
+									]),
+								])
+							),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CombineAttachments.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.CombineAttachments.Text']),
+								$td($input({ id: 'cwCombineAttachments', type: 'checkbox', checked: cwApiSettings['CwCombineAttachments'].trim().toLowerCase() === 'true' })),
+							]),
+							$tr([
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.IncludePreviewLink.LabelText']),
+								$td(SC.res['ConnectWiseManage.EditExtensionSettings.IncludePreviewLink.Text']),
+								$td($input({ id: 'cwIncludeSessionDetailsLink', type: 'checkbox', checked: cwApiSettings['CwIncludeSessionDetailsLink'].trim().toLowerCase() === 'true' })),
+							]),
+						]),
+					]),
+				]),
+				SC.dialog.createButtonPanel(SC.res['ExtensionsPanel.EditSettings.ButtonText']),
+			],
+				function (eventArgs, dialog) {
+					var settingValues = {};
+					settingValues['CwUrl'] = $('cwUrlBox').value;
+					settingValues['ScServerUrl'] = $('scUrlBox').value;
+					settingValues['CwCompanyName'] = $('cwCompanyNameBox').value;
+					settingValues['CwApiPublicKey'] = $('cwPublicApiKeyBox').value;
+					settingValues['CwApiPrivateKey'] = $('cwPrivateApiKeyBox').value;
+					settingValues['CwTimeEntryFlag'] = $('cwTimeEntryFlag').checked ? 1 : 0;
+					settingValues['CwSessionChatPostType'] = ($('cwSessionChatAsNote').checked ? 1 : 0) | ($('cwSessionChatAsAttachment').checked ? 2 : 0);
+					settingValues['CwSessionEventsPostType'] = ($('cwSessionEventsAsNote').checked ? 1 : 0) | ($('cwSessionEventsAsAttachment').checked ? 2 : 0);
+					settingValues['CwSessionConnectionEventsPostType'] = ($('cwSessionConnectionEventsAsNote').checked ? 1 : 0) | ($('cwSessionConnectionEventsAsAttachment').checked ? 2 : 0);
+					settingValues['CwSessionNotesPostType'] = ($('cwSessionNotesAsNote').checked ? 1 : 0) | ($('cwSessionNotesAsAttachment').checked ? 2 : 0);
+					settingValues['CwCombineAttachments'] = $('cwCombineAttachments').checked ? 'true' : 'false';
+					settingValues['CwIncludeSessionDetailsLink'] = $('cwIncludeSessionDetailsLink').checked ? 'true' : 'false';
+
+					var button = dialog.getElementsByClassName('ButtonPanel')[0].firstChild;
+					button.disabled = true;
+					button.style.opacity = '0.5';
+
+					SC.service.SaveConnectWiseApiSettings(
+						settingValues,
+						SC.pagedata.notifyDirty
+					);
+				});
+		});
+	}
+});
+
+var sendCommandToParent = function (commandName, commandData) {
+	if (commandName)
+		window.parent.postMessage({ _internalCommand: commandName, _internalCommandData: commandData || {} }, '*');
+};
+
+SC.event.addGlobalHandler(SC.event.PreRender, function () {
+	window.addEventListener('message', function (eventArgs) {
+		SC.util.includeStyleSheet(extensionContext.baseUrl + 'ManageIntegrationStyle.css');
+		switch (eventArgs.data._externalCommand) {
+			case 'RenderSessionDetailsFullWidthCommand':
+				var applicablePaths = ['/', '/Guest', '/Host', '/Login'];
+				if (!applicablePaths.includes(window.location.pathname))
+					break;
+
+				var elementsToHide = [
+					$('.HeaderPanel'),
+					$('.GlobalBar'),
+					$('.NavigationPanel'),
+					$('.MasterPanel'),
+					$('.MainDetailHeaderPanel'),
+					$('.MainDetailPanel'),
+					$('.ToggleDetailPanelButton'),
+				];
+
+				for (var i = 0; i < elementsToHide.length; i++)
+					if (elementsToHide[i])
+						SC.css.ensureClass(elementsToHide[i], 'HiddenElement', true);
+
+				var outerPanel = $('.OuterPanel');
+				var mainPanel = $('.MainPanel');
+				var subDetailHeader = $('.SubDetailHeaderPanel');
+
+				if (outerPanel)
+					SC.css.ensureClass(outerPanel, 'OuterPanelOverride', true);
+
+				if (mainPanel)
+					SC.css.ensureClass(mainPanel, 'GridOverride', true);
+
+				if (subDetailHeader)
+					SC.css.ensureClass(subDetailHeader, 'FullSizeHeaderElement', true);
+
+				var notifyPaths = ['/', '/Guest'];
+
+				if (notifyPaths.includes(window.location.pathname))
+					sendCommandToParent('OnPreRenderComplete');
+
+				break;
+
+			case 'LoadSessionCommand':
+				var sessionID = eventArgs.data._externalCommandData;
+
+				if (sessionID) {
+					SC.service.GetUrlForSession(
+						sessionID,
+						function (url) {
+							if (url)
+								window.location.href = url;
+						}
+					);
+				}
+
+				break;
+		}
+	});
+
+	sendCommandToParent('OnPreRender');
+});
+
+});</script>
+<script>SC.extension.addInitializeProc('75fe3a74-43ba-45eb-9eab-12ff335b91cb', function (extensionContext) {
+/** Edit App.Config Settings **/
+
+/** Global Extension Variables **/
+var extensionId = extensionContext.baseUrl.split('/').slice(-2)[0];
+
+const numberRegex = new RegExp(/(^[0-9]$)|(^[1-9][0-9]+$)/);
+
+/** Custom 'top' modal dialog to show alert type messages in modal dialog on top of existing modal dialogs **/
+function setupTopModalDialog(disable){
+	if (!disable) {
+		eval('SC.dialog.showModalDialogRawOnTop = ' + SC.dialog.showModalDialogRaw.toString().replace('SC.dialog.hideModalDialog();','').replace(/hideModalDialog/g,'hideTopModalDialog'));
+		eval('SC.dialog.hideTopModalDialog = ' + SC.dialog.hideModalDialog.toString().replace(/getModalDialog/g,'getTopModalDialog'));
+		SC.dialog.getTopModalDialog = function() { return Array.prototype.map.call(window.document.querySelectorAll('#dialog'),function(_){return _;}).pop(); };
+	} else {
+		delete SC.dialog.showModalDialogRawOnTop;
+		delete SC.dialog.hideTopModalDialog;
+		delete SC.dialog.getTopModalDialog;
+	}
+}
+
+function alertModal(message){
+	if (!SC.dialog.showModalDialogRawOnTop)
+		setupTopModalDialog();
+
+	SC.dialog.showModalDialogRawOnTop(
+		message.subClass || 'MessageBox',
+		[
+			message.titlePanel || SC.dialog.createTitlePanel(message.title || SC.res['ErrorPanel.Title']),
+			message.contentPanel || SC.dialog.createContentPanel($div(message.content || message)),
+			message.buttonPanel || SC.dialog.createButtonPanel(message.button || 'OK',message.extraButtons || null)
+		],
+		message.onExecProc || function(eventArgs){
+			SC.dialog.hideTopModalDialog();
+		},
+		message.onQueryProc || null,
+		message.onHideProc || function(){
+			if (SC.dialog.getTopModalDialog() == SC.dialog.getModalDialog())
+				setupTopModalDialog(true);
+		}
+	);
+}
+/**********************************************/
+
+/** Table Sorting Functions **/
+var sortBy = {};
+function sortTable(table, col) {
+	if (sortBy.table){
+		var oldSortCol = document.querySelector('#' + sortBy.table).tHead.rows[0].cells[sortBy.col || 0];
+		SC.css.ensureClass(oldSortCol,'Ascending',false);
+		SC.css.ensureClass(oldSortCol,'Descending',false);
+	}
+	
+	if (sortBy.table == table.id && sortBy.col == col){
+		sortBy.dir = -((+sortBy.dir) || -1);
+	}
+	else {
+		sortBy.table = table.id;
+		sortBy.col = col;
+		sortBy.dir = 1;
+	}
+	if (sortBy.dir !== 0)
+		SC.css.ensureClass(table.tHead.rows[0].cells[col],sortBy.dir > 0 ? 'Ascending' : 'Descending', true);
+
+	var tb = table.tBodies[0];
+	var tr = Array.prototype.slice.call(tb.rows, 0);
+	tr = tr.sort(function (a, b) {
+		var aVal = a.cells[col].order ? a.cells[col].order : a.cells[col].textContent;
+		var bVal = b.cells[col].order ? b.cells[col].order : b.cells[col].textContent;
+		return sortBy.dir * (typeof aVal == 'number' ? aVal - bVal : aVal.localeCompare(bVal));
+	});
+	for(var i=0; i<tr.length; ++i){
+		tb.appendChild(tr[i]);
+	}
+}
+
+function makeSortable(table) {
+	var th = table.tHead, i;
+	th && (th = th.rows[0]) && (th = th.cells);
+	if (th) i = th.length;
+	else return; // if no `<thead>` then do nothing
+	while (--i >= 0) (function (i) {
+		SC.css.ensureClass(th[i],'Sortable',true);
+		th[i].addEventListener('click', function () {sortTable(table, i)});
+	}(i));
+}
+
+function makeAllSortable(parent) {
+	parent = parent || document.body;
+	var t = parent.getElementsByTagName('table'), i = t.length;
+	while (--i >= 0) makeSortable(t[i]);
+}
+/*****************************/
+
+/** General Extension Functions **/
+function checkVersion(minVer, curVer) {
+	if (typeof curVer + typeof minVer != 'stringstring')
+		return false;
+	var a = curVer.split('.'), b = minVer.split('.'), i = 0, len = Math.max(a.length, b.length);
+	for (; i < len; i++) {
+		if ((a[i] && !b[i] && parseInt(a[i]) > 0) || (parseInt(a[i]) > parseInt(b[i]))) {
+			return true;
+		} else if ((b[i] && !a[i] && parseInt(b[i]) > 0) || (parseInt(a[i]) < parseInt(b[i]))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function checkLongBitmask(flagInput,maskInput) {
+	var maxJSMaskLength = 8;
+	flags = flagInput.substring(flagInput.length,flagInput.length-(Math.min(maxJSMaskLength,flagInput.length)));
+	mask = maskInput.substring(maskInput.length,maskInput.length-(Math.min(maxJSMaskLength,maskInput.length)));
+
+	if (isNaN(flags) || isNaN(mask)){
+		return false;
+	}
+
+	if (parseInt(mask,16) === 0) {
+		if (maskInput.length > maxJSMaskLength) {
+			return checkLongBitmask(flagInput.substring(0,flagInput.length - maxJSMaskLength),maskInput.substring(0,maskInput.length - maxJSMaskLength));
+		} else {
+			return false;
+		}
+	}
+	if ((parseInt(flags,16) & parseInt(mask,16)) == parseInt(mask,16)){
+		return true;
+	}
+}
+
+function setLongBitmask(flags, mask, on) {
+	for (var x = mask.length, i; x > 0; x--){
+		i = x-1;
+		if (mask.charAt(i) == '0' || mask.charAt(i) == 'x'){
+			continue;
+		}
+		var replChar = flags.charAt(i);
+		if (on) {
+			replChar = (parseInt(flags.charAt(i),16) | parseInt(mask.charAt(i),16)).toString();
+		} else {
+			replChar = (parseInt(flags.charAt(i),16) & ~parseInt(mask.charAt(i),16)).toString();
+		}
+		flags = flags.substr(0, i) + replChar + flags.substr(i+replChar.length);
+	}
+	return flags;
+}
+
+function clickToSelect(event) {
+	//this == event.target
+	event.preventDefault();
+	var scroll_offset= this.parentElement.scrollTop;
+	this.selected= !this.selected;
+	this.parentElement.scrollTop= scroll_offset;
+}
+
+function disableMouseMoveUnselect(event) {
+	event.preventDefault();
+}
+
+function getValueSetForMaxVersion(settings, maxVersion) {
+	var returnValue = '';
+	var maxDVver = '0.0';
+	for (var v in settings){
+		if (checkVersion(v,maxVersion) && checkVersion(maxDVver,v)) {
+			maxDVver = v;
+			returnValue = settings[v];
+		}
+	}
+	return returnValue;
+}
+
+function addCacheBuster(url) {
+	var cachebuster = '__CacheBuster=' + new Date().getTime();
+	return (
+		url.indexOf('?') != -1 ?
+			url.split('?')[0] + '?' + cachebuster + '&' + url.split('?')[1] :
+			(url.indexOf('#') != -1 ?
+				url.split('#')[0] + '?' + cachebuster + '#' + url.split('#')[1] :
+				url + '?' + cachebuster
+			)
+		);
+}
+
+function httpRequestJSONObjectAsync(theUrl, callback)
+{
+	var xmlHttp = new XMLHttpRequest();
+	xmlHttp.onreadystatechange = function() { 
+		if (xmlHttp.readyState === 4 && xmlHttp.status === 200) {
+			callback(JSON.parse(xmlHttp.responseText));
+		} else if (xmlHttp.readyState === 4) {
+			console.warn('Metaquery failed');
+		}
+	};
+	xmlHttp.open('GET', addCacheBuster(theUrl), true);
+	xmlHttp.send();
+}
+
+/********************/
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons,function (eventArgs) {
+	switch (eventArgs.area) {
+		case 'ExtrasPopoutPanel':
+			if (SC.context.pageType == 'AdministrationPage') {
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'command_' + extensionId,
+						text: SC.res['Extension.EditAppConfig.CommandText']}
+				);
+			}
+		break;
+		case 'resetbutton_' + extensionId:
+			eventArgs.buttonDefinitions.push(
+				{ commandName: 'resetcommand_' + extensionId,
+					text: SC.res['Extension.EditAppConfig.ResetDefaultsButtonText']}
+			);
+		break;
+		case 'restorebutton_' + extensionId:
+			eventArgs.buttonDefinitions.push(
+				{ commandName: 'restorecommand_' + extensionId,
+					text: SC.res['Extension.EditAppConfig.RestoreSettingsButtonText']}
+			);
+		break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch(eventArgs.commandName)
+	{
+		case 'command_' + extensionId:
+			SC.util.includeStyleSheet(extensionContext.baseUrl + 'Style.css');
+			SC.service.EditAppConfigSettings_GetAppConfigFileContents(function(AppConfigContents){
+			httpRequestJSONObjectAsync(extensionContext.baseUrl + 'Defaults.json?cache=' + (Math.random()*1000000),function(defaults){
+				var serverVersion = SC.context.productVersion;
+				var dataUri = SC.ui.createDataUri(SC.util.isCapable(SC.util.Caps.Safari) ? 'attachment/config' : 'text/config', AppConfigContents);
+
+				var settings = {};
+				if (AppConfigContents !== null) {
+					var xmlParser = new DOMParser();
+					var xmlString = atob(AppConfigContents);
+					xmlString = xmlString.substring(xmlString.indexOf('<'),xmlString.lastIndexOf('>')+1);
+					if (xmlString != '<!-- ' + SC.res['Extension.EditAppConfig.AppConfigFileNotFoundText'] + ' -->') {
+						try{
+							var xmlDoc = xmlParser.parseFromString(xmlString,'text/xml');
+							var xmlSettings = xmlDoc.getElementsByTagName('setting');
+							for (var i = 0; i < xmlSettings.length; i++) {
+								settings[xmlSettings[i].getAttribute('name').trim()] = xmlSettings[i].textContent.trim();
+							}
+						}
+						catch (err) {
+							alertModal(SC.res['Extension.EditAppConfig.InvalidAppConfigXML'] + '\n\n' + err);
+							settings = {};
+						}
+					}
+				}
+				
+				var masks = defaults.DEFAULTS.SCBitmaskDefaults;
+				var usingCustomDefaults = false;
+				if (extensionContext.settingValues.AppConfigDefaultsCode !== ''){
+					var newDefaults = {};
+					try {
+						if (extensionContext.settingValues.AppConfigDefaultsCode.startsWith('{') && extensionContext.settingValues.AppConfigDefaultsCode.endsWith('}'))
+							newDefaults  = JSON.parse(extensionContext.settingValues.AppConfigDefaultsCode);
+						else
+							newDefaults = JSON.parse(atob(extensionContext.settingValues.AppConfigDefaultsCode));
+					} catch (err) {
+						alertModal(SC.res['Extension.EditAppConfig.InvalidDefaultsCode'] + '\n\n' + err);
+					}; // This semicolon is NOT un-necessary... Javascript Try/Catch won't run the catch code in some browsers without it.
+					for (var key in newDefaults) {
+						if (key=='DEFAULTS') continue;
+						defaults[key] = newDefaults[key];
+					}
+					if ('DEFAULTS' in newDefaults) {
+						for (var mask in newDefaults.DEFAULTS.SCBitmaskDefaults) {
+							masks[mask] = newDefaults.DEFAULTS.SCBitmaskDefaults[mask];
+						}
+					}
+					if (Object.keys(newDefaults).length)
+						usingCustomDefaults = true;
+				}
+				
+				var enableAdvancedBitmaskEditor = extensionContext.settingValues.UseEasyBitmaskEditor == 'true';
+				var enableCommandsSelector = extensionContext.settingValues.UseCommandsSelector == 'true';
+				var instructions = SC.res['Extension.EditAppConfig.DialogInstructions'] + (usingCustomDefaults ? '\n' + SC.res['Extension.EditAppConfig.CustomDefaultsInstructionNote'] : '');
+				
+				SC.dialog.showModalButtonDialog(
+					'EditAppConfigSettings',
+					SC.res['Extension.EditAppConfig.DialogTitle'],
+					SC.res['Extension.EditAppConfig.DialogButtonText'],
+					'Default',
+					
+					function (container) {
+						
+						SC.ui.addElement(container, 'P', instructions);
+						var AppConfigLinksContainer = SC.ui.addElement(container, 'ul',{});
+						var AppConfigHelpLink = SC.ui.createElement('A',{href:SC.res['Extension.EditAppConfig.AppConfigSettingsLinkHref'],target:'_blank', _innerText:SC.res['Extension.EditAppConfig.AppConfigSettingsLinkText']});
+						var AppConfigMacHelpLink = SC.ui.createElement('A',{href:SC.res['Extension.EditAppConfig.AppConfigSettingsLinkHrefForMac'],target:'_blank', _innerText:SC.res['Extension.EditAppConfig.AppConfigSettingsLinkTextMacLinux']});
+						var AppConfigDownloadLink = SC.ui.createElement('A',{download:'app.config',href:dataUri,_innerText:SC.res['Extension.EditAppConfig.AppConfigLinkText']});
+						SC.ui.setDisabled(AppConfigDownloadLink,AppConfigContents === null);
+						var AppConfigDeleteLink = SC.command.queryAndCreateCommandButtons('resetbutton_' + extensionId);
+						var AppConfigRestoreLink = SC.command.queryAndCreateCommandButtons('restorebutton_' + extensionId);
+						SC.ui.addElement(AppConfigLinksContainer,'li',AppConfigDownloadLink);
+						SC.ui.addElement(AppConfigLinksContainer,'li',AppConfigHelpLink);
+						if (checkVersion("6.1",serverVersion)) // Mac settings only available on 6.1, so only show the help link on 6.1+
+							SC.ui.addElement(AppConfigLinksContainer,'li',AppConfigMacHelpLink); 
+						SC.ui.addElement(AppConfigLinksContainer,'li',AppConfigDeleteLink);
+						SC.ui.addElement(AppConfigLinksContainer,'li',AppConfigRestoreLink);
+
+						var AppConfigTablesContainer = SC.ui.addElement(container, 'div',{className:'AppConfigTablesContainer'});
+						
+						var flagsTable = SC.ui.createElement('TABLE',{id:'AppConfigFlags',className:'AppConfigFlagsTable'});
+						var flagsTableHead = SC.ui.addElement(flagsTable,'THEAD',{});
+						var flagsHeaderRow = SC.ui.addElement(flagsTableHead,'tr', {});
+						SC.ui.addElement(flagsHeaderRow,'th',{_innerText:SC.res['Extension.EditAppConfig.FlagColumnTitle']});
+						var flagsTableBody = SC.ui.addElement(flagsTable,'TBODY',{});
+						
+						var settingsTable = SC.ui.createElement('TABLE',{id:'AppConfigSettings',className:'AppConfigSettingsTable'});
+						var settingsTableHead = SC.ui.addElement(settingsTable,'THEAD',{});
+						var settingsHeaderRow = SC.ui.addElement(settingsTableHead,'tr', {});
+						SC.ui.addElement(settingsHeaderRow,'th',{_innerText:SC.res['Extension.EditAppConfig.KeyColumnTitle']});
+						SC.ui.addElement(settingsHeaderRow,'th',{_innerText:SC.res['Extension.EditAppConfig.ValueColumnTitle']});
+						var settingsTableBody = SC.ui.addElement(settingsTable,'TBODY',{});
+						
+						var bitmasksTable = SC.ui.createElement('TABLE',{id:'AppConfigBitmasks',className:'AppConfigBitmasksTable'});
+						var bitmasksTableHead = SC.ui.addElement(bitmasksTable,'THEAD',{});
+						var bitmasksHeaderRow = SC.ui.addElement(bitmasksTableHead,'tr', {});
+						SC.ui.addElement(bitmasksHeaderRow,'th',{_innerText:SC.res['Extension.EditAppConfig.BitmaskColumnTitle']});
+						var bitmasksTableBody = SC.ui.addElement(bitmasksTable,'TBODY',{});
+
+						SC.ui.addElement(AppConfigTablesContainer,'div',flagsTable);
+						SC.ui.addElement(AppConfigTablesContainer,'div',settingsTable);
+						SC.ui.addElement(AppConfigTablesContainer,'div',bitmasksTable);
+						var settingNum = 0;
+						for (var key in defaults) {
+							if (key == 'DEFAULTS' || !checkVersion(defaults[key].ver,serverVersion)) { continue; }
+							if (defaults[key].removed && checkVersion(defaults[key].removed,serverVersion)) { continue; }
+							var keyDV = getValueSetForMaxVersion(defaults[key].dv,serverVersion);
+							var keyValue = (key in settings && !eventArgs.loadDefaults) ? settings[key] : keyDV;
+							var keyType = defaults[key].type;
+							var keyValueEditor = '';
+							var valueTip = SC.util.formatString(SC.res['Extension.EditAppConfig.CurrentValueString'],keyValue) + '\n' + SC.util.formatString(SC.res['Extension.EditAppConfig.DefaultValueString'],keyDV);
+							var keySide = defaults[key].side;
+							var keySideText = '';
+							switch(keySide){
+								case 'Guest':
+									keySideText = SC.util.formatString(SC.res['Extension.EditAppConfig.AppliesTo.Format'],
+										SC.res['Extension.EditAppConfig.AppliesTo.GuestText']) + '\n';
+									break;
+								case 'Host':
+									keySideText = SC.util.formatString(SC.res['Extension.EditAppConfig.AppliesTo.Format'],
+										SC.res['Extension.EditAppConfig.AppliesTo.HostText']) + '\n';
+									break;
+								case 'Host and Guest':
+									keySideText = SC.util.formatString(SC.res['Extension.EditAppConfig.AppliesTo.Format'],
+										SC.res['Extension.EditAppConfig.AppliesTo.BothText']) + '\n';
+									break;
+							}
+							var keyTip = defaults[key].tip + '\n' + keySideText + valueTip;
+							var row = SC.ui.createElement('tr', {id:key + 'Row'});
+							switch (keyType) {
+								case 'flag':
+									SC.ui.addContent(flagsTableBody,row);
+									break;
+								case 'bitmask':
+									SC.ui.addContent(bitmasksTableBody,row);
+									break;
+								default:
+									SC.ui.addContent(settingsTableBody,row);
+									break;
+							}
+							settingNum++;
+							switch (keyType) {
+								case 'flag':
+									keyValueEditor = SC.ui.createElement('INPUT',{type:'checkbox',id:key,keyType:'flag',title:valueTip});
+									if (keyValue == 'true')
+										keyValueEditor.checked = true;
+									var flagLabel = SC.ui.createElement('LABEL',{_innerText:key,title:keyTip});
+									if (keyDV == 'true') {
+										flagLabel.style.fontWeight = 'bold';
+									}
+									SC.ui.addElement(row,'td',keyValueEditor,' ',flagLabel);
+									break;
+								case 'commands':
+									if (enableCommandsSelector) {
+										keyValueEditor = SC.ui.createElement('SELECT',{id:key,keyType:'commands',className:'appConfigCommandsSelect',multiple:'true',title:valueTip,size:'10'});
+										for (var each in defaults[key].commands){
+											if (!checkVersion(defaults[key].commands[each].ver,serverVersion)) { continue; }
+											if (defaults[key].commands[each].removed && checkVersion(defaults[key].commands[each].removed,serverVersion)) { continue; }
+											var commandOption = SC.ui.createElement('OPTION',{value:each,text:each,title:defaults[key].commands[each].tip});
+											commandOption.onmousedown = clickToSelect;
+											commandOption.onmousemove = disableMouseMoveUnselect;
+											if (keyValue.match(new RegExp('(?:^|,)'+each+'(?:,|$)'))) {
+												commandOption.selected = true;
+											}
+											if (keyDV.match(new RegExp('(?:^|,)'+each+'(?:,|$)'))) {
+												commandOption.style.fontWeight = 'bold';
+											}
+											keyValueEditor.add(commandOption);
+										}
+									} else {
+										keyValueEditor = SC.ui.createElement('INPUT',{id:key,keyType:'commands',type:'text',value:keyValue,_innerText:keyValue,title:valueTip});
+									}
+									SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}));
+									var ele = SC.ui.addElement(row,'td',keyValueEditor);
+									ele.order = settingNum;
+									break;
+								case 'directory':
+									keyValueEditor = SC.ui.createElement('INPUT',{id:key,keyType:'directory',className:'appConfigDirectoryInput',type:'text',value:keyValue,_innerText:keyValue,title:valueTip});
+									SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}));
+									var ele = SC.ui.addElement(row,'td',keyValueEditor);
+									ele.order = settingNum;
+									break;
+								case 'bitmask':
+									if (enableAdvancedBitmaskEditor) {
+										keyValueEditor = SC.ui.createElement('ul',{id:key,keyType:'bitmask',value:keyValue, className:'appConfigBitmaskValue',title:valueTip});
+										for (var mask in masks){
+											if (!checkVersion(masks[mask].ver,serverVersion)) { continue; }
+											if (masks[mask].removed && checkVersion(masks[mask].removed,serverVersion)) { continue; }
+											var varCheck = SC.ui.createElement('INPUT',{type:'checkbox',id:key + mask,mask:mask,initChecked:false,keyType:'bitmask',className:'appConfigBitmaskValue',title:masks[mask].tip});
+											var bitMaskChecked = false;
+											if (checkLongBitmask(keyValue,masks[mask].mask)){
+												varCheck.checked = true;
+												varCheck.initChecked = true;
+												bitMaskChecked = true;
+											}
+											var bitmaskLabel = SC.ui.createElement('LABEL',{_innerText:mask,className:'appConfigBitmaskValue',title:masks[mask].tip});
+											if (checkLongBitmask(keyDV,masks[mask].mask)){
+												bitmaskLabel.style.fontWeight = 'bold';
+											}
+											SC.ui.addElement(keyValueEditor,'li',varCheck,bitmaskLabel);
+										}
+										SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip,className:'appConfigBitmaskLabel'}),keyValueEditor);
+									} else {
+										keyValueEditor = SC.ui.createElement('INPUT',{id:key,keyType:'bitmask',type:'text',value:keyValue,_innerText:keyValue,title:valueTip});
+										SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}), SC.ui.createElement('BR',{}), keyValueEditor);
+									}
+									break;
+								case 'selection':
+									keyValueEditor = SC.ui.createElement('SELECT',{id:key,keyType:'selection',title:valueTip});
+									var maxOptVer = '0';
+									for (var oset in defaults[key].options){
+										if (checkVersion(oset,serverVersion) && checkVersion(maxOptVer,oset)) {
+											maxOptVer = oset;
+										}
+									}
+									if (maxOptVer == '0') { continue; }
+									for (var opt in defaults[key].options[maxOptVer]){
+										var selectionOption = SC.ui.createElement('OPTION',{id:key+'-'+opt,value:defaults[key].options[maxOptVer][opt],text:opt});
+										if (selectionOption.id == key + '-' + keyValue){
+											selectionOption.selected = true;
+										}
+										keyValueEditor.add(selectionOption);
+									}
+									SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}));
+									var ele = SC.ui.addElement(row,'td',keyValueEditor);
+									ele.order = settingNum;
+									break;
+								case 'number':
+									keyValueEditor = SC.ui.createElement('INPUT',{id:key,keyType:'number',type:'number',value:keyValue,_innerText:keyValue,title:valueTip});
+									for (var cset in defaults[key].constraints) {
+										if (!checkVersion(cset,serverVersion)) { continue; }
+											for (var constraint in defaults[key].constraints[cset]) {
+												keyValueEditor[constraint] = defaults[key].constraints[cset][constraint];
+											}
+									}
+									SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}));
+									var ele = SC.ui.addElement(row,'td',keyValueEditor);
+									ele.order = settingNum;
+									break;
+								case 'string':
+								default:
+									keyValueEditor = SC.ui.createElement('INPUT',{id:key,keyType:'text',type:'text',value:keyValue,_innerText:keyValue,title:valueTip});
+									SC.ui.addElement(row,'td', SC.ui.createElement('LABEL',{_innerText:key,title:keyTip}));
+									var ele = SC.ui.addElement(row,'td',keyValueEditor);
+									ele.order = settingNum;
+							}
+							
+							if (keyType != 'flag') {
+								keyValueEditor.className += keyValueEditor.className ? ' AppConfigKeyValueEditor' : 'AppConfigKeyValueEditor';
+							}
+						}
+					},
+					function (eventArgs) {
+						if (eventArgs.commandName == 'resetcommand_' + extensionId){
+							SC.event.dispatchEvent('','executecommand',{commandName:'command_' + extensionId,loadDefaults:true});
+							return;
+						}
+						
+						if (eventArgs.commandName == 'restorecommand_' + extensionId){
+							SC.event.dispatchEvent('','executecommand',{commandName:'command_' + extensionId});
+							return;
+						}
+	
+						var jsObj = {};
+						
+						var bitmaskRegex = new RegExp(/(^0x[0-7]{16}$)/);
+						var scBitmaskMaxValidValue = getValueSetForMaxVersion(defaults.ControlPanelIDs.dv,serverVersion);
+						var invalidSettings = false;
+						var invalidSettingList = [];
+						var nonstandardSettings = false;
+						var nonstandardSettingList = [];
+						
+						for (var key in defaults){
+							if (key == 'DEFAULTS' || $(key) === null || !checkVersion(defaults[key].ver,serverVersion)) { continue; }
+
+							var newValue = $(key).value;
+							var defaultValue = getValueSetForMaxVersion(defaults[key].dv,serverVersion);;
+							var oldValue = (key in settings) ? settings[key] : defaultValue;
+							var saveValue = oldValue;
+							var keyType = $(key).keyType;
+
+							switch (keyType){
+								case 'flag':
+									if ($(key).checked) {
+										saveValue = 'true';
+									} else {
+										saveValue = 'false';
+									}
+									if (saveValue == defaultValue)
+										continue;
+									break;
+								case 'commands':
+									if (enableCommandsSelector) {
+										saveValue = '';
+										for (var i = 0; i < $(key).length; i++) {
+											if ($(key).options[i].selected) {
+												if (saveValue !== ''){
+													saveValue = saveValue + ',';
+												}
+												saveValue = saveValue + $(key).options[i].value;
+											}
+										}
+									} else {
+										saveValue = newValue.replace(/[^\w\s]/gi, ',').replace(/\s/gi,'');
+									}
+									break;
+								case 'bitmask':
+									if (enableAdvancedBitmaskEditor) { // 'checkboxes' or 'true'
+										var keyCheckboxCollection = $(key).getElementsByTagName('INPUT');
+										for (var x=0; x<keyCheckboxCollection.length; x++) {
+											if (keyCheckboxCollection[x].type == 'checkbox' && (keyCheckboxCollection[x].initChecked != keyCheckboxCollection[x].checked)) {
+												newValue = setLongBitmask(newValue,masks[keyCheckboxCollection[x].mask].mask,keyCheckboxCollection[x].checked);
+											}
+										}
+									}
+									if (newValue === ''){ // Blank values will indicate using the default value.
+										newValue = defaultValue;
+									}
+									if (bitmaskRegex.test(newValue)){
+										if (setLongBitmask(newValue,scBitmaskMaxValidValue,false) === '0x0000000000000000'){
+											saveValue = newValue;
+										} else {
+											if (confirm(SC.util.formatString(SC.res['Extension.EditAppConfig.QuestionableBitmaskValue'],key,newValue,serverVersion))) {
+												saveValue = newValue;
+											} else {
+												return;
+											}
+										}
+									} else {
+										alertModal(SC.util.formatString(SC.res['Extension.EditAppConfig.InvalidBitmaskValue'],key,newValue,'0x0000000000000000','0x7777777777777777'));
+										return;
+									}
+									break;
+								case 'directory':
+									if (newValue === '') { // Blank values will indicate using the default value.
+										newValue = defaultValue;
+									}
+									saveValue = newValue;
+									break;
+								case 'selection':
+									saveValue = $(key).options[$(key).selectedIndex].value;
+									break;
+								case 'number':
+									if (!numberRegex.test(newValue)){
+										alertModal(SC.util.formatString(SC.res['Extension.EditAppConfig.ValueNotANumber'],key));
+										return;
+									}
+									saveValue = newValue;
+									break;
+								default:
+									saveValue = newValue;
+							}
+							
+							if (saveValue === defaultValue) { continue; }
+
+							jsObj[key] = [saveValue,defaults[key].area];
+						}
+						json = JSON.stringify(jsObj);
+						
+						SC.dialog.showModalActivityBox(SC.res['Extension.EditAppConfig.SavingModalTitle'],SC.res['Extension.EditAppConfig.SavingModalMessage']);
+						SC.service.EditAppConfigSettings_SetAppConfigSettings(
+							json,
+							function () {
+								SC.event.dispatchEvent('','executecommand',{commandName:'command_' + extensionId});
+							}
+						);
+					}
+				);
+				SC.dialog.setButtonPanelError(SC.ui.findDescendent(SC.dialog.getModalDialog(),function(_){return _.className && _.className.indexOf('ButtonPanel') > -1;}),{message:SC.res['Extension.EditAppConfig.DialogButtonNotice']});
+				makeAllSortable($('dialog'));
+			});
+			});
+		break;
+	}
+});
+
+/** Extend Extension Options **/
+var extendedExtensionOptions = {};
+/* Option Settings Below */
+
+extendedExtensionOptions.helpUrl = 'https://help.screenconnect.com/Extension:Edit_App.Config_Settings';
+extendedExtensionOptions.extensionResourceID = 'EditAppConfig';
+
+/* Option Settings Above */
+extendedExtensionOptions.extensionId=extensionContext.baseUrl.split('/').slice(-2)[0];
+SC.res['HelpPanel.Link'+extendedExtensionOptions.extensionId+'.Url']=extendedExtensionOptions.helpUrl;
+SC.event.addGlobalHandler(SC.event.QueryCommandButtonState,function(eventArgs){
+	if(eventArgs.commandName=='EditExtensionSettings'&&eventArgs.commandContext.extensionInfo.ExtensionID==extendedExtensionOptions.extensionId&&eventArgs.commandElement._commandName=='EditExtensionSettings'){
+		if(extendedExtensionOptions.extensionResourceID&&extendedExtensionOptions.extensionResourceID.length)
+			SC.ui.addElement(eventArgs.target.parentElement,'A',{_commandName:'command_'+extensionId,_innerText:SC.res['Extension.'+extendedExtensionOptions.extensionResourceID+'.CommandText']});
+		SC.ui.addElement(eventArgs.target.parentElement,'A',{_commandName:'NavigateHelpLink',_commandArgument:extendedExtensionOptions.extensionId,_innerText:SC.res['Command.Help.Text'].replace(' ▽','')});
+	}
+});
+/******************************/
+});</script>
+<script>SC.extension.addInitializeProc('158cfe2a-e19f-407a-a9b2-899be383abe7', function (extensionContext) {
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	if (SC.context.pageType == 'HostPage' || SC.context.pageType == 'AdministrationPage') {
+		switch (eventArgs.area) {
+			case 'HelpPopoutPanel':
+				eventArgs.buttonDefinitions.push({
+					commandName: 'ShowEnhancedHelp',
+					text: SC.res['EnhancedHelp.ModalTitle.Text'],
+				});
+				break;
+			case 'TrayPanel':
+				eventArgs.buttonDefinitions.push({
+					commandName: 'ShowEnhancedHelp',
+					imageUrl: extensionContext.baseUrl + 'Icons/HelpIconDark.svg',
+					className: 'EnhancedHelpButtonGlobalBar',
+					title: SC.res['EnhancedHelp.ModalTitle.Text'],
+				});
+				break;
+			case 'TrayIconPanel':
+				eventArgs.buttonDefinitions.push({
+					commandName: 'ShowEnhancedHelp',
+					imageUrl: extensionContext.baseUrl + 'Icons/HelpIcon.svg',
+					className: 'EnhancedHelpButtonGlobalBar',
+					title: SC.res['EnhancedHelp.ModalTitle.Text'],
+				});
+				break;
+		}
+	}
+});
+
+function createNewWindowLink(resourceKeyWord) {
+	return $a({ _textResource: 'EnhancedHelp.' + resourceKeyWord + '.Text', href: SC.res['EnhancedHelp.' + resourceKeyWord + '.Url'], target: '_blank', className: resourceKeyWord });
+};
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'ShowEnhancedHelp':
+			if (SC.context.productVersion.split('.')[0] <= 19 && SC.context.productVersion.split('.')[1] <= 5) { // Added a new way to create modal in 19.6
+				SC.dialog.showModalDialogRaw('EnhancedHelp', [
+					SC.dialog.createTitlePanel(SC.res['EnhancedHelp.ModalTitle.Text']),
+					SC.dialog.createContentPanel([
+						$div({ className: 'GuidesPanel' }, [
+							createNewWindowLink('ReleaseNotes'),
+							createNewWindowLink('SecurityGuide'),
+							createNewWindowLink('SupportGuide'),
+							createNewWindowLink('AccessGuide'),
+						]),
+						$div({ className: 'HelpPanel' }, [
+							$h4({ _textResource: 'EnhancedHelp.IdeasPanel.Title' }),
+							SC.command.createCommandButtons([
+								{ commandName: 'GiveFeedback' },
+							]),
+							createNewWindowLink('EnhancementRequest'),
+						]),
+						$div({ className: 'HelpPanel' }, [
+							$h4({ _textResource: 'EnhancedHelp.NeedSupportPanel.Title' }),
+							createNewWindowLink('SubmitTicket'),
+							createNewWindowLink('StartChat'),
+						]),
+						$div({ className: 'MoreHelpPanel' }, [
+							createNewWindowLink('OnlineHelp'),
+							createNewWindowLink('UserForum'),
+						]),
+					]),
+				]);
+			}
+			else {
+				SC.dialog.showModalDialog('EnhancedHelp', {
+					noBackdrop: true,
+					isContentFullSize: true,
+					titleResourceName: 'EnhancedHelp.ModalTitle.Text',
+					content: [
+						$div({ className: 'GuidesPanel' }, [
+							createNewWindowLink('ReleaseNotes'),
+							createNewWindowLink('SecurityGuide'),
+							createNewWindowLink('SupportGuide'),
+							createNewWindowLink('AccessGuide'),
+						]),
+						$div({ className: 'HelpPanel' }, [
+							$h4({ _textResource: 'EnhancedHelp.IdeasPanel.Title' }),
+							SC.command.createCommandButtons([
+								{ commandName: 'GiveFeedback' },
+							]),
+							createNewWindowLink('EnhancementRequest'),
+						]),
+						$div({ className: 'HelpPanel' }, [
+							$h4({ _textResource: 'EnhancedHelp.NeedSupportPanel.Title' }),
+							createNewWindowLink('SubmitTicket'),
+							createNewWindowLink('StartChat'),
+						]),
+						$div({ className: 'MoreHelpPanel' }, [
+							createNewWindowLink('OnlineHelp'),
+							createNewWindowLink('UserForum'),
+						]),
+					],
+				});
+			}
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.PreRender, function (eventArgs) {
+	if (SC.context.pageType == 'HostPage' || SC.context.pageType == 'AdministrationPage') {
+		SC.util.includeStyleSheet(extensionContext.baseUrl + 'HelpStyle.css');
+
+		if (SC.context.productVersion.split('.')[0] < 20 || (SC.context.productVersion.split('.')[0] == 20 && SC.context.productVersion.split('.')[1] < 2)) { // New Solid Theme uses TrayIconPanel to show help icon in 20.2
+			if ($('link[href*="App_Themes"]').href.indexOf('Shell') == -1) {
+				SC.ui.addContent(
+					$('.NavigationPanel'),
+					$div(
+						{
+							_commandName: 'ShowEnhancedHelp',
+							className: 'EnhancedHelpButtonNavigationPanel',
+						},
+						[
+							$img({ src: extensionContext.baseUrl + 'Icons/HelpIcon.svg' }),
+							$span(SC.res['EnhancedHelp.ModalTitle.Text']),
+						]
+					)
+				);
+				SC.ui.moveNodeUp($('.EnhancedHelpButtonNavigationPanel'));
+				SC.ui.moveNodeUp($('.EnhancedHelpButtonNavigationPanel'));
+			}
+		}
+	}
+});
+
+});</script>
+<script>SC.extension.addInitializeProc('57f9b480-146f-49e9-bed0-a89fc468cfe2', function (extensionContext) {
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	switch (eventArgs.area) {
+		case 'ExtrasPopoutPanel':
+			if (SC.context.pageType == 'AdministrationPage' && SC.context.tabKeys[SC.context.tabIndex] == "Extensions") {
+				eventArgs.buttonDefinitions.push(
+					{ commandName: 'outlookIntegrationShowSettingsDialog', text: SC.res['Outlook.ShowSettingsDialog.Text'] }
+				);
+			}
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'outlookIntegrationShowSettingsDialog':
+			showIntegrationSettingsDialog();
+			break;
+		case 'outlookIntegrationRegenerateApiKey':
+			console.log('outlookIntegrationRegenerateApiKey clicked');
+			document.querySelector('input[name = "ConnectWiseControlApiKey"]').value = regenerateKey();
+			break;
+		case 'outlookIntegrationCopyToClipboard':
+			console.log('outlookIntegrationCopyToClipboard clicked');
+			var o = document.querySelector('input[name = "ConnectWiseControlApiKey"]');
+			SC.ui.executeCopyToClipboard(o, $('.ResultPanel'));
+			break;
+	}
+});
+
+var getEnsuredSetting = function (settings, key, fallback) {
+	if (settings[key] !== '')
+		return settings[key];
+
+	return fallback();
+};
+
+var makekey = function (length) {
+	var text = "";
+	var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+	for (var i = 0; i < length; i++)
+		text += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+
+	return text;
+}
+
+var regenerateKey = function () {
+	var newkey = makekey(23);
+	SC.service.SaveOutlookSettings({ ApiKey: newkey });
+	return newkey;
+}
+
+var showIntegrationSettingsDialog = function () {
+	SC.util.includeStyleSheet(extensionContext.baseUrl + 'Style.css');
+
+	SC.service.GetOutlookSettings(function (settings) {
+		SC.dialog.showModalDialogRaw('IntegrationSettingsDialog',
+			[
+				SC.dialog.createTitlePanel(SC.res['Outlook.ShowSettingsDialog.Text']),
+				SC.dialog.createContentPanel([
+					$dl({ className: "" }, [
+
+						$dt(SC.res['OutlookIntegrationSettings.ConnectWiseControlApiKey.Label']),
+						$dd([
+							$input({ type: 'text', name: 'ConnectWiseControlApiKey', readonly: 'readonly', className: '', value: getEnsuredSetting(settings, 'ApiKey', regenerateKey) }),
+						]),
+
+						$dt(),
+						$dd([
+
+							$p(
+								$input({ type: 'button', _commandName: 'outlookIntegrationCopyToClipboard', value: SC.res['Command.CopyToClipboard.Text'] }),
+
+								SC.command.createCommandButtons([
+									{ text: SC.res['Outlook.ShowSettingsDialog.Regenerate'], commandName: "outlookIntegrationRegenerateApiKey", className: "outlookIntegrationCommandButton" },
+								]),
+							),
+						]),
+					]),
+					$p({ className: 'ResultPanel' }),
+				]),
+				SC.dialog.createButtonPanel(SC.res['Outlook.ShowSettingsDialog.Done'])
+			],
+			function (eventArgs, dialog) {
+				switch (eventArgs.commandName) {
+
+					case "Default":
+						SC.dialog.hideModalDialog();
+						SC.pagedata.notifyDirty();
+						break;
+				}
+			},
+			null,
+			null
+		);
+	});
+};
+});</script>
+<script>SC.extension.addInitializeProc('2c4f522f-b39a-413a-8807-dc52a2fce13e', function (extensionContext) {
+SC.util.includeStyleSheet(extensionContext.baseUrl + 'RemoteWorkforceStyle.css');
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	if (SC.context.pageType == 'HostPage' && eventArgs.area == 'HostDetailPopoutPanel' && SC.context.canAddNote && SC.context.canAdminister) {
+		eventArgs.buttonDefinitions.push(
+			{ commandName: 'AssignSessions', text: SC.res['RemoteWorkforce.HostPopoutPanel.AssignSession.Text'] }
+		);
+	}
+	else if ((SC.context.pageType == 'GuestPage' || SC.context.pageType == 'HostPage') && eventArgs.area == 'ExtrasPopoutPanel') {
+		eventArgs.buttonDefinitions.push(
+			{ commandName: 'DownloadRemoteWorkforceClient', text: SC.res['RemoteWorkforce.HostPopoutPanel.DownloadClient.Text'] }
+		);
+	}/*
+	else if (SC.context.pageType == 'AdministrationPage' && eventArgs.area == 'ExtrasPopoutPanel') {
+		eventArgs.buttonDefinitions.push(
+			{commandName: 'BeginInstallationWizard', text: "LAUNCH WIZARD"}
+		);
+	}*/
+	else if (SC.context.pageType == 'AdministrationPage' && eventArgs.area == 'ExtrasPopoutPanel') {
+		eventArgs.buttonDefinitions.push(
+			{ commandName: 'ShowDownloadMachineAssignmentReportDialog', text: SC.res['RemoteWorkforce.ExtrasPopoutPanel.DownloadMachineAssignmentReport.Text'] }
+		);
+	}
+});
+
+function buildAndDisplayRemoteWorkforceWizard() {
+	SC.dialog.showModalButtonDialog("RemoteWorkforceWizard", "Installation Wizard", "Done", "Done",
+		function (container) {
+			var wrapper = SC.ui.createElement('DIV', { className: 'RemoteWrapper' });
+			var groupWrapper = SC.ui.createElement('DIV', { className: 'GroupWrapper' });
+			SC.ui.addElement(groupWrapper, 'SPAN', { innerHTML: 'To automatically create the session group, click the Button' });
+			SC.ui.addElement(groupWrapper, 'INPUT', { value: 'Create', type: 'button' });
+
+			var roleWrapper = SC.ui.createElement('DIV', { className: 'RoleWrapper' });
+			SC.ui.addElement(roleWrapper, 'SPAN', { innerHTML: 'To automatically create the Security Role, click the Button' });
+			SC.ui.addElement(roleWrapper, 'INPUT', { value: 'Create', type: 'button' });
+
+			SC.ui.addContent(wrapper, groupWrapper);
+			SC.ui.addContent(container, wrapper);
+		})
+}
+
+SC.event.addGlobalHandler(SC.event.PreRender, function () {
+	if (SC.context.pageType === 'AdministrationPage') {
+		if (extensionContext.settingValues.IsCorrectSessionGroupCreated !== 'true')
+			SC.service.EnsureCorrectSessionGroupExists(
+				function () { /*don't care*/ }, function (e) { console.log(e); }
+			);
+
+		if (extensionContext.settingValues.IsRoleCreated === 'false') {
+			SC.service.EnsureRemoteWorkforceSecurityRoleExists(
+				function () { /*don't care*/ }, function (e) { console.log(e); }
+			);
+		}
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'BeginInstallationWizard':
+			buildAndDisplayRemoteWorkforceWizard();
+			break;
+		case 'CreateWorkforceSessionGroup':
+			SC.service.EnsureSessionGroupExists(
+				function () { /*don't care*/ }, function (e) { console.log(e); }
+			);
+			break;
+		case 'CreateRemoteWorkforceRole':
+			SC.service.EnsureRemoteWorkforceSecurityRoleExists(
+				function () { /*don't care*/ }, function (e) { console.log(e); }
+			);
+			break;
+		case 'DownloadRemoteWorkforceClient':
+			SC.util.launchUrl(extensionContext.baseUrl + 'Download.ashx');
+			break;
+		case 'AssignSessions':
+			SC.dialog.showModalButtonDialog('AssignSession', SC.res['RemoteWorkforce.AssignModal.Title.Text'], 'Save', 'Save',
+				function (container) {
+					var selector = SC.ui.createElement('SELECT', { id: 'hostSelector' });
+
+					SC.service.GetAllUsersForWritableMembershipProviders(function (hosts) {
+						SC.ui.addElement(container, 'P', SC.res['RemoteWorkforce.AssignModal.Instructions.Text']);
+
+						hosts.map(function (host) {
+							return {
+								text: host.UserDisplayName || host.UserName,
+								value: "UserName:" + host.UserName + ",UserDisplayName:" + host.UserDisplayName,
+							};
+						}).sort(function (host1, host2) {
+							return host1.text.localeCompare(host2.text, undefined, { sensitivity: 'base' });
+						}).forEach(function (host) {
+							selector.add(
+								SC.ui.createElement(
+									'OPTION',
+									host
+								)
+							);
+						});
+
+						SC.ui.addContent(container, selector);
+					});
+				},
+				function () {
+					var sessionIDs = Array.from($('.DetailTable').rows)
+						.filter(function (sessionRow) {
+							return SC.ui.isChecked(sessionRow) || SC.ui.isSelected(sessionRow);
+						})
+						.map(function (sessionRow) {
+							return sessionRow._dataItem.SessionID;
+						});
+
+					SC.service.AddAssignmentNoteToSession(sessionIDs, $('hostSelector').options[$('hostSelector').selectedIndex].value);
+					SC.dialog.hideModalDialog();
+				});
+			break;
+		case 'ShowDownloadMachineAssignmentReportDialog':
+			var availableReportFileTypes = ['CSV', 'XML', 'JSON', 'HTML'];
+
+			SC.dialog.showModalDialogRaw('DownloadMachineAssignmentReport', [
+				SC.dialog.createTitlePanel(SC.res['RemoteWorkforce.DownloadMachineAssignmentReportModal.Title']),
+				SC.dialog.createContentPanel([
+					$dl([
+						$dt({ _textResource: 'RemoteWorkforce.DownloadMachineAssignmentReportModal.FileTypeLabel.Text' }),
+						$dd([
+							$select({ id: 'reportFileTypeSelector' }, availableReportFileTypes.map(function (reportFileType) {
+								return $option({
+									text: reportFileType,
+									value: reportFileType.toLowerCase(),
+								});
+							})),
+						]),
+					]),
+				]),
+				SC.dialog.createButtonPanel(SC.res['RemoteWorkforce.DownloadMachineAssignmentReportModal.Button.Text']),
+			], function (dialogEventArgs) {
+				switch (dialogEventArgs.commandName) {
+					case 'Default':
+						SC.util.launchUrl(extensionContext.baseUrl + 'MachineAssignmentReportDownload.ashx' + SC.util.getQueryString({ ReportFileType: $('reportFileTypeSelector').value }));
+						break;
+				}
+			});
+			break;
+	}
+});
+});</script>
+<script>SC.extension.addInitializeProc('0c6af2c7-d59d-4329-8de5-297713a59a79', function (extensionContext) {
+
+function getCheckedOrSelectedSessions() {
+	var checkedOrSelectedSessions = [];
+	var rows = $('.DetailTableContainer table').rows;
+
+	Array.prototype.find.call(rows, function (row) {
+		if (row._dataItem) {
+			var isChecked = SC.ui.isChecked(row);
+			var isSelected = SC.ui.isSelected(row);
+
+			if (isChecked || isSelected) {
+				checkedOrSelectedSessions.push(row._dataItem);
+			}
+		}
+	});
+
+	return checkedOrSelectedSessions;
+}
+
+SC.event.addGlobalHandler(SC.event.PreRender, function (eventArgs) {
+	if (!extensionContext.settingValues.createdTagsSessionGroup) {
+		SC.service.NotifyCreatedTagsSessionGroup();
+		SC.service.SetTagCustomProperties(function () {
+			SC.pagedata.notifyDirty();
+		});
+
+		SC.service.GetSessionGroups(function (sessionGroups) {
+			for (var sessionTypesAsString = ['Sessions', 'Meetings', 'Machines'], sessionType = 0 ; sessionType < sessionTypesAsString.length; sessionType++) {
+				var name = "All " + sessionTypesAsString[sessionType] + " by " + SC.res['Command.TagSession.TagLabel'];
+
+				if (!sessionGroups.find(function (session) { return session.Name === name })) {
+					sessionGroups.push({
+						Name: name,
+						SessionFilter: "NOT CustomProperty8 = ''",
+						SessionType: sessionType,
+						SubgroupExpressions: 'CustomProperty8'
+					});
+				}
+			}
+
+			SC.service.SaveSessionGroups(sessionGroups);
+		});
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+	switch (eventArgs.area) {
+		case 'HostDetailPanel':
+		case 'HostDetailPopoutPanel':
+			eventArgs.buttonDefinitions.push({ commandName: 'TagSession', className: 'AlwaysOverflow', text: 'Tag Session' });
+			break;
+	}
+});
+
+SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+	switch (eventArgs.commandName) {
+		case 'TagSession':
+			SC.util.includeStyleSheet(extensionContext.baseUrl + 'Style.css');
+			var checkedOrSelectedSessions = getCheckedOrSelectedSessions();
+
+			SC.dialog.showModalDialogRaw(
+				'TagSession',
+				[
+					SC.dialog.createTitlePanel({ _textResource: 'Command.TagSession.Title' }),
+					SC.dialog.createContentPanel([
+						$p({ _textResource: 'Command.TagSession.Message' }),
+						$dl([
+							$dt({ _textResource: 'Command.TagSession.TagLabel' }),
+							$dd(tag = $input({ type: 'text', value: checkedOrSelectedSessions.length == 1 ? checkedOrSelectedSessions[0].CustomPropertyValues[7] : '' })),
+						]),
+					]),
+					SC.dialog.createButtonPanel(SC.res['Command.TagSession.ButtonText'])
+				],
+				function (eventArgs) {
+					// on executeCommand
+					switch (eventArgs.commandName) {
+						case 'Default':
+							checkedOrSelectedSessions.forEach(function (session) {
+								SC.service.UpdateSessionCustomPropertyValue(window.getSessionGroupUrlPart()[0], session.SessionID, 7, tag.value);
+							});
+							SC.pagedata.notifyDirty();
+							SC.dialog.hideModalDialog();
+							break;
+					}
+				}
+			);
+			break;
+	}
+});
+});</script>
+<title>
+	ConnectWise Control Remote Support Software
+</title></head>
+<body>
+	<div class="HiddenPanel"></div>
+	<script>
+		SC.ui.setVisible(document.body, false);
+	</script>
+	<div class="OuterPanel">
+		<div class="HeaderPanel"></div>
+		<div class="NavigationPanel ArrowNavigation" tabindex="10"></div>
+		<div class="MainPanel">
+			
+	<div class="ContentPanel Authentication">
+		<div class="AuthPanel"></div>
+		<div class="InfoPanel"></div>
+	</div>
+
+		</div>
+	</div>
+	<script>
+		SC.context.scriptBaseUrl = SC.util.getBaseUrl($('defaultScript').src);
+	</script>
+	
+	<script>
+		SC.event.addGlobalHandler(SC.event.PreRender, function () {
+			const pageFromUrl = SC.util.getParameterlessUrl(window.location.href).replace(SC.context.scriptBaseUrl, '').toLowerCase();
+			_authState.page = Object.keys(Page).find(key => SC.util.equalsCaseInsensitive(Page[key], pageFromUrl)) || Page.Login;
+			_authState.formState[Field.UserName] = SC.context.userNameHint;
+			_authState.securityNonce = SC.util.getRandomAlphanumericString(16);
+
+			// in order to preserve the full url through authentication redirects, the frontend must append the hash parameters, since only it has access to them
+			SC.context.loginReturnUrl = SC.context.loginReturnUrl + SC.util.getHashStringFromParameters(SC.util.getHashParameters())
+
+			if (SC.context.isUserAuthenticated && (SC.context.loginReason === SC.types.LoginReason.Logout || SC.context.loginReason === SC.types.LoginReason.IdleTooLong)) {
+				SC.service.TryLogout(function (success) {
+					if (!success) {
+						return; // ostensibly we're still authenticated, so don't trigger infinite redirect loop
+					}
+
+					const externalLogoutUrl = "";
+					// TODO SCP-36247
+					//const externalLogoutUrl = WebAuthentication.GetExternalLogoutUrl(this.Context, this.Request.GetRealUrl(false), this.Request.GetRealUrl().AbsoluteUri);
+
+					if (externalLogoutUrl) {
+						window.location.href = externalLogoutUrl;
+					} else {
+						// refresh page so nav bar notices we're logged out
+						window.location.reload();
+					}
+				});
+			}
+			else if (
+				SC.context.loginReason !== SC.types.LoginReason.Logout
+				&& SC.context.externalAuthenticationProviderInfos.length === 1
+				&& !(SC.context.isUserAuthenticated && SC.context.loginReason === SC.types.LoginReason.PermissionsInsufficient)
+				&& !SC.context.canTryLogin
+			) {
+				const loneProvider = SC.context.externalAuthenticationProviderInfos[0];
+				SC.command.dispatchGlobalExecuteCommand('InitiateExternalProviderAuth', loneProvider.providerName);
+			}
+
+			refreshAuthPanel();
+		});
+
+		SC.event.addGlobalHandler(SC.event.PostRender, function () {
+			smartFocusFormField();
+		});
+
+		SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+			/**
+			 * @param {function(function(function(): boolean?): void, function(Error): void): void} submitFunc
+			 */
+			function handleFormSubmission(submitFunc) {
+				_authState.isFormSubmitting = true;
+				_authState.error = '';
+				refreshAuthPanel();
+
+				/**
+				 * @param {function(): boolean?} continueFunc
+				 */
+				function handleSuccess(continueFunc) {
+					_authState.isFormSubmitting = false;
+					_authState.error = '';
+					_authState.fieldNameToFocus = '';
+
+					try {
+						if (continueFunc) {
+							if (continueFunc()) // true if redirecting
+								_authState.isFormSubmitting = true; // keep disabled state until browser handles redirect
+						}
+					} catch (error) {
+						handleError(error);
+					}
+
+					refreshAuthPanel();
+					smartFocusFormField();
+				}
+
+				/**
+				 * @param {Error} error
+				 */
+				function handleError(error) {
+					_authState.isFormSubmitting = false;
+					_authState.error = error.message;
+					refreshAuthPanel();
+					smartFocusFormField();
+				}
+
+				try {
+					submitFunc(handleSuccess, handleError);
+				} catch (error) {
+					handleError(error);
+				}
+			}
+
+
+			switch (eventArgs.commandName) {
+				case 'SubmitLogin':
+					_authState.formState = Object.assign(
+						{
+							[Field.UserName]: _authState.formState[Field.UserName],
+							[Field.Password]: _authState.formState[Field.Password],
+						},
+						SC.ui.extractFormState(eventArgs.commandElement)
+					);
+
+					handleFormSubmission((handleSuccess, handleError) => SC.service.TryLogin(
+						_authState.formState[Field.UserName],
+						_authState.formState[Field.Password],
+						_authState.formState[Field.OneTimePassword],
+						_authState.formState[Field.ShouldTrust],
+						_authState.securityNonce,
+						result => handleSuccess(() => {
+							switch (result) {
+								case SC.types.SecurityOperationResult.Success:
+									window.location.href = SC.context.loginReturnUrl;
+									return true;
+								case SC.types.SecurityOperationResult.ChangeablePasswordExpired:
+									SC.command.dispatchGlobalExecuteCommand('ChangePassword', _authState.formState[Field.UserName]);
+									return true;
+								case SC.types.SecurityOperationResult.UnchangeablePasswordExpired:
+									throw new Error(SC.res['LoginPanel.UnchangeablePasswordExpiredText']);
+								case SC.types.SecurityOperationResult.OneTimePasswordRequired:
+									_authState.formStep = FormStep.OneTimePassword;
+									return false;
+								case SC.types.SecurityOperationResult.OneTimePasswordInvalid:
+									throw new Error(SC.res['LoginPanel.InvalidCredentialsText']);
+								case SC.types.SecurityOperationResult.OneTimePasswordProviderInvalid:
+									throw new Error(SC.res['LoginPanel.InvalidOneTimePasswordProviderText']);
+								case SC.types.SecurityOperationResult.OneTimePasswordUserKeyInvalid:
+									throw new Error(SC.res['LoginPanel.InvalidOneTimePasswordUserKeyText']);
+								case SC.types.SecurityOperationResult.UserNameInvalid:
+								case SC.types.SecurityOperationResult.PasswordInvalid:
+									throw new Error(SC.res['LoginPanel.InvalidCredentialsText']);
+								case SC.types.SecurityOperationResult.LockedOut:
+									throw new Error(SC.res['LoginPanel.LockoutText']);
+								case SC.types.SecurityOperationResult.Unknown:
+								default:
+									throw new Error(SC.res['LoginPanel.UnknownText']);
+							}
+						}),
+						handleError
+					));
+
+					break;
+
+				case 'ResetPassword':
+					window.location.href = SC.context.resetPasswordPageUrl + SC.util.getQueryString({ [SC.context.loginUserNameParameterName]: _authState.formState[Field.UserName] });
+					break;
+
+				case 'InitiateExternalProviderAuth':
+					const providerName = eventArgs.commandArgument;
+
+					handleFormSubmission((handleSuccess, handleError) => SC.service.GetExternalLoginUrl(
+						providerName,
+						SC.context.scriptBaseUrl,
+						SC.context.loginReturnUrl,
+						SC.context.userNameHint,
+						externalLoginUrl => handleSuccess(() => { window.location.href = externalLoginUrl; return true; }),
+						handleError
+					));
+
+					break;
+
+				case 'SubmitChangePassword':
+					_authState.formState = SC.ui.extractFormState(eventArgs.commandElement);
+
+					handleFormSubmission((handleSuccess, handleError) => SC.service.ChangePassword(
+						_authState.formState[Field.UserName],
+						_authState.formState[Field.Password],
+						_authState.formState[Field.NewPassword],
+						_authState.formState[Field.VerifyNewPassword],
+						result => handleSuccess(() => {
+							switch (result) {
+								case SC.types.SecurityOperationResult.Success:
+									window.location.href = SC.context.loginUrl + SC.util.getQueryString({ [SC.context.loginUserNameParameterName]: _authState.formState[Field.UserName] });
+									return true;
+								case SC.types.SecurityOperationResult.UserNameInvalid:
+									_authState.fieldNameToFocus = Field.UserName;
+									break;
+								case SC.types.SecurityOperationResult.CurrentPasswordInvalid:
+									_authState.fieldNameToFocus = Field.Password;
+									break;
+								case SC.types.SecurityOperationResult.NewPasswordInvalid:
+									_authState.fieldNameToFocus = Field.NewPassword;
+									break;
+								case SC.types.SecurityOperationResult.NewPasswordMatchInvalid:
+									_authState.fieldNameToFocus = Field.VerifyNewPassword;
+									break;
+							}
+
+							throw new Error(SC.util.getResourceWithFallback('ChangePasswordPanel.{0}ErrorMessage', SC.util.getEnumValueName(SC.types.SecurityOperationResult, result)));
+						}),
+						handleError
+					));
+
+					break;
+
+				case 'SubmitResetPassword':
+					_authState.formState = SC.ui.extractFormState(eventArgs.commandElement);
+
+					handleFormSubmission((handleSuccess, handleError) => {
+						switch (_authState.formStep) {
+							case FormStep.Default:
+								SC.service.InitiatePasswordReset(
+									_authState.formState[Field.UserName],
+									_authState.securityNonce,
+									() => handleSuccess(() => { _authState.formStep = FormStep.ResetPassword; }),
+									handleError
+								);
+								break;
+
+							case FormStep.ResetPassword:
+								SC.service.TryResetPassword(
+									_authState.formState[Field.ResetCode],
+									_authState.formState[Field.UserName],
+									_authState.formState[Field.NewPassword],
+									_authState.formState[Field.VerifyNewPassword],
+									_authState.securityNonce,
+									result => handleSuccess(() => {
+										switch (result) {
+											case SC.types.SecurityOperationResult.Success:
+												window.location.href = SC.context.loginUrl + SC.util.getQueryString({ [SC.context.loginUserNameParameterName]: _authState.formState[Field.UserName] });
+												return true;
+											case SC.types.SecurityOperationResult.ResetCodeInvalid:
+												_authState.fieldNameToFocus = Field.ResetCode;
+												break;
+											case SC.types.SecurityOperationResult.NewPasswordInvalid:
+												_authState.fieldNameToFocus = Field.NewPassword;
+												break;
+											case SC.types.SecurityOperationResult.NewPasswordMatchInvalid:
+												_authState.fieldNameToFocus = Field.VerifyNewPassword;
+												break;
+										}
+
+										throw new Error(SC.util.getResourceWithFallback('ResetPasswordPanel.{0}ErrorMessage', SC.util.getEnumValueName(SC.types.SecurityOperationResult, result)));
+									}),
+									handleError
+								);
+								break;
+						}
+					});
+
+					break;
+			}
+		});
+	</script>
+
+	<script>
+
+		SC.event.addGlobalHandler(SC.event.QueryCommandButtons, function (eventArgs) {
+			switch (eventArgs.area) {
+				case 'TrayIconPanel':
+					eventArgs.buttonDefinitions.push(
+						{ commandName: 'Extras', imageUrl: 'Images/Extras.svg', className: 'ExtrasButton', tooltipOrTitle: true },
+						{ commandName: 'Applications', imageUrl: 'Images/WaffleIcon.svg', tooltipOrTitle: true }
+					);
+					break;
+				case 'ExtrasPopoutPanel':
+					eventArgs.buttonDefinitions.push(
+						{
+							significance: -10,
+							commandName: 'Navigate',
+							commandArgument: SC.context.administrationPageUrl + '?Tab=Extensions#ShowExtensionBrowser',
+							className: 'ShowExtensionBrowserButton',
+							text: SC.res['Command.ShowExtensionBrowser.Text'],
+						}
+					);
+					break;
+				case 'ToolsPanel':
+					eventArgs.buttonDefinitions.push(
+						{ commandName: 'Extras', imageUrl: 'Images/Extras.svg', className: 'ExtrasButton' },
+						{ commandName: 'Login' }
+					);
+					break;
+				case 'UserPopoutPanel':
+					eventArgs.buttonDefinitions.push(
+						{ commandName: 'NavigateControlPanel' },
+						{ commandName: 'ChangePassword' },
+						{ commandName: 'Logout' }
+					);
+					break;
+				case 'HelpPopoutPanel':
+					if (SC.context.pageType !== 'GuestPage' && SC.context.pageType != 'LoginPage') {
+						eventArgs.buttonDefinitions.push({ commandName: 'GiveFeedback' });
+
+						for (var i = 1; ; i++) {
+							var resourceValue = SC.res['HelpPanel.Link' + i + '.Text'];
+
+							if (resourceValue === undefined || resourceValue === '')
+								break;
+
+							var url = SC.util.sanitizeUrl(SC.res['HelpPanel.Link' + i + '.Url']);
+							eventArgs.buttonDefinitions.push({ commandName: 'NavigateHelpLink', commandArgument: url, text: resourceValue, title: url });
+						}
+					}
+					break;
+			}
+		});
+
+		SC.event.addGlobalHandler(SC.event.QueryCommandButtonState, function (eventArgs) {
+			switch (eventArgs.commandName) {
+				case 'User':
+					eventArgs.isVisible = SC.context.isUserAuthenticated;
+					break;
+				case 'Login':
+					eventArgs.isVisible = SC.context.pageType != 'SetupWizardPage' && !SC.context.isUserAuthenticated && !SC.util.isCapable(SC.util.Caps.InternetExplorer, null, { major: 12 }); // Login page doesn't support IE
+					break;
+				case 'NavigateControlPanel':
+					eventArgs.isVisible = !!SC.context.controlPanelUrl;
+					break;
+				case 'ChangePassword':
+					eventArgs.isVisible = SC.context.canChangePassword;
+					break;
+				case 'Extras':
+				case 'Applications':
+					eventArgs.isVisible = SC.popout.computePopoutCommandsVisible(eventArgs);
+					break;
+				case 'Help':
+					eventArgs.isVisible = SC.popout.computePopoutCommandsVisible(eventArgs);
+					break;
+				case 'Navigate':
+					if (eventArgs.commandArgument.startsWith(SC.context.administrationPageUrl))
+						eventArgs.isVisible = SC.context.isUserAdministrator;
+					break;
+			}
+		});
+
+		SC.event.addGlobalHandler(SC.event.ExecuteCommand, function (eventArgs) {
+			switch (eventArgs.commandName) {
+				case 'Extras':
+				case 'Applications':
+					SC.popout.showPanelFromCommand(eventArgs, null, function (popoutPanel) {
+						SC.css.ensureClass(popoutPanel, eventArgs.commandName + 'Popout', true);
+					});
+					break;
+				case 'Login':
+					SC.util.sendToLogin(SC.types.LoginReason.None, false);
+					break;
+				case 'Logout':
+					SC.util.sendToLogin(SC.types.LoginReason.Logout, false);
+					break;
+				case 'User':
+					SC.popout.togglePanel(eventArgs.commandElement, function (popoutPanel) {
+						['HelpPopoutPanel', 'UserPopoutPanel'].forEach(function (_) {
+							var commandButtons = SC.command.queryAndCreateCommandButtons(_);
+
+							if (commandButtons.length)
+								popoutPanel.appendChild($div(commandButtons));
+						});
+
+						SC.command.updateCommandButtonsState(popoutPanel);
+					});
+					break;
+				case 'NavigateControlPanel':
+					window.open(SC.util.sanitizeUrl(SC.context.controlPanelUrl));
+					break;
+				case 'ChangePassword':
+					var params = {};
+					params[SC.context.loginUserNameParameterName] = eventArgs.commandArgument;
+					window.location.href = SC.context.changePasswordPageUrl + SC.util.getQueryString(params);
+					break;
+				case 'NavigateHelpLink':
+					window.open(eventArgs.commandArgument);
+					break;
+				case 'ToggleMenu':
+					SC.css.toggleClass(document.documentElement, 'ShowMenu');
+					break;
+				case 'GiveFeedback':
+					SC.dialog.showModalButtonDialog(
+						'GiveFeedback',
+						SC.res['Command.GiveFeedback.Text'],
+						SC.res['Command.GiveFeedback.ButtonText'],
+						'Default',
+						function (container) {
+							SC.ui.setContents(container, [
+								$div({ _textResource: 'GiveFeedbackPanel.ReviewLabelText' }),
+								$div({ className: 'RatingSelectionPanel' },
+									['Good', 'Neutral', 'Bad'].map(function (rating) {
+										return $span(
+											$label({ className: rating }, [
+												$input({ type: 'radio', name: 'rating', value: rating.toLowerCase() }),
+												$div({ className: 'RadioImage' }),
+												$span({ _textResource: 'GiveFeedbackPanel.' + rating + 'RatingLabelText' }),
+											])
+										);
+									})
+								),
+								$div([
+									$label({ _textResource: 'GiveFeedbackPanel.EmailLabelText' }, [
+										$input({ type: 'email', id: 'email' }),
+									]),
+								]),
+								$div([
+									$label({ _textResource: 'GiveFeedbackPanel.CommentsLabelText' }, [
+										SC.ui.createTextBox({ id: 'commentsBox' }, true),
+									]),
+								]),
+							]);
+						},
+						function (eventArgs) {
+							SC.service.SendFeedback(
+								Array.prototype.map.call(document.querySelectorAll('input[name=rating]:checked'), function (e) { return e.value; })[0],
+								$('commentsBox').value,
+								$('email').value,
+								function () {
+									SC.dialog.showModalMessageBox(
+										SC.res['GiveFeedbackPanel.SuccessHeading'],
+										SC.res['GiveFeedbackPanel.SuccessMessage']
+									);
+								}
+							);
+						}
+					);
+					break;
+				case 'ManageToolbox':
+					SC.toolbox.showToolboxDialog(eventArgs.commandName, eventArgs.commandArgument);
+					break;
+				case 'Navigate':
+					window.location.href = eventArgs.commandArgument;
+					break;
+			}
+		});
+
+		SC.event.addGlobalHandler(SC.event.QueryNavigationLinks, function (eventArgs) {
+			Array.prototype.push.apply(eventArgs.navigationLinks, SC.context.sessionTypeInfos.map(function (_) {
+				return {
+					href: SC.context.scriptBaseUrl + SC.context.hostPageUrl + '#' + SC.util.getEnumValueName(SC.types.SessionType, _.sessionType),
+					text: SC.util.getSessionTypeResource('NavigationPanel.{0}LinkText', _.sessionType),
+					imageUrl: SC.util.formatString('Images/Navigation{0}.svg', SC.util.getEnumValueName(SC.types.SessionType, _.sessionType)),
+					sessionType: _.sessionType,
+				}
+			}));
+
+			if (SC.context.isUserAdministrator)
+				eventArgs.navigationLinks.push({
+					href: SC.context.scriptBaseUrl + SC.context.administrationPageUrl,
+					text: SC.res['NavigationPanel.AdministrationLinkText'],
+					imageUrl: 'Images/NavigationAdministration.svg',
+				});
+		});
+
+		SC.event.addGlobalHandler('keydown', function (eventArgs) {
+			if (SC.event.doesKeyEventIndicateTextEntryOrArrowKeyNavigation(eventArgs) && (!document.activeElement || SC.ui.isDefinitelyNotTextEntryElement(document.activeElement))) {
+				var arrowKeyInfo = SC.event.getArrowKeyInfo(eventArgs);
+
+				if (arrowKeyInfo && document.activeElement && SC.css.containsClass(document.activeElement, 'ArrowNavigation')) {
+					eventArgs.preventDefault();
+					SC.ui.setHiddenFocusAndClearOthers();
+
+					var targetPreviousOrNext = arrowKeyInfo.isLeft || arrowKeyInfo.isUp;
+
+					SC.event.dispatchEvent(document.activeElement, SC.event.KeyNavigation, {
+						currentActiveElement: document.activeElement,
+						currentSelectedElement: SC.ui.findDescendantBreadthFirst(document.activeElement, function (_) { return SC.ui.isSelected(_); }, !targetPreviousOrNext),
+						targetPreviousOrNext: targetPreviousOrNext,
+						arrowKeyInfo: arrowKeyInfo,
+						hasShift: eventArgs.shiftKey,
+					});
+				} else {
+					var queryTextEntryElementArgs = SC.event.dispatchGlobalEvent(SC.event.QueryTextEntryElement, {
+						textEntryElement: null,
+					});
+
+					if (queryTextEntryElementArgs.textEntryElement) {
+						if (!SC.event.doesKeyEventIndicateTextEntryNavigation(eventArgs))
+							queryTextEntryElementArgs.textEntryElement.value = '';
+
+						queryTextEntryElementArgs.textEntryElement.focus();
+					}
+				}
+			}
+		});
+
+		SC.event.addGlobalHandler(SC.event.KeyNavigation, function (eventArgs) {
+			// default handling for key navigation
+			var elementToNavigateTo;
+
+			if (eventArgs.currentSelectedElement) {
+				elementToNavigateTo = SC.ui.getPreviousOrNextElementSibling(eventArgs.currentSelectedElement, eventArgs.targetPreviousOrNext) || eventArgs.currentSelectedElement;
+
+				while (SC.util.isNullOrEmpty(elementToNavigateTo._commandName) && SC.ui.getPreviousOrNextElementSibling(elementToNavigateTo, eventArgs.targetPreviousOrNext)) {
+					elementToNavigateTo = SC.ui.getPreviousOrNextElementSibling(elementToNavigateTo, eventArgs.targetPreviousOrNext);
+				}
+			} else {
+				elementToNavigateTo = SC.ui.findDescendantBreadthFirst(eventArgs.currentActiveElement, function (_) { return !SC.util.isNullOrEmpty(_._commandName); }); // this can still be empty
+			}
+
+			SC.util.tryNavigateToElementUsingCommand(elementToNavigateTo, eventArgs.targetPreviousOrNext, eventArgs.hasShift);
+		});
+
+		SC.event.addGlobalHandler(SC.event.PreRender, function () {
+			var resetInactivityProc = function () {
+				window._lastNotifyActivityTime = new Date().getTime();
+
+				if (SC.context.isUserAuthenticated && SC.context.loginAfterInactivityMilliseconds != 0) {
+					if (window._loginAfterInactivityTimer)
+						window.clearTimeout(window._loginAfterInactivityTimer);
+
+					window._loginAfterInactivityTimer = window.setTimeout(function () { SC.util.sendToLogin(SC.types.LoginReason.IdleTooLong, true); }, Math.min(SC.context.loginAfterInactivityMilliseconds, 2147483647)); //interval stored as 32-bit signed int
+				}
+			};
+
+			SC.context.prehandleServiceFailureProc = function (error) {
+				if (error.statusCode != 403)
+					return false;
+
+				SC.util.sendToLogin(SC.types.LoginReason.PermissionsInsufficient, true);
+			}
+
+			SC.context.unhandledServiceFailureProc = function (error) {
+				SC.dialog.showModalErrorBox(error.detail || error.message);
+			}
+
+			resetInactivityProc();
+
+			SC.ui.initializeWindowActivityTracking(function () {
+				if (new Date().getTime() - window._lastNotifyActivityTime > SC.context.notifyActivityFrequencyMilliseconds) {
+					resetInactivityProc();
+					SC.service.NotifyActivity();
+				}
+			});
+
+			var parameterlessUrl = SC.util.getParameterlessUrl(window.location.href);
+			var createNavigationLinkFunc = function (_) {
+				return $div({ _commandName: 'Navigate', _commandArgument: _.href, _selected: _.href == parameterlessUrl }, [
+					$img({ src: _.imageUrl }),
+					$span(_.text),
+				]);
+			};
+
+			SC.ui.setContents($('.HeaderPanel'), [
+				$a({ href: SC.context.guestPageUrl, className: 'LogoIconLink' }),
+				$a({ _commandName: 'ToggleMenu', className: 'ShowMenuButton' }, ''),
+				$h1({ className: 'LogoPanel' }),
+				$div({ className: 'CommandPanel' }),
+			]);
+
+			SC.command.queryAndAddCommandButtons($('.HeaderPanel .CommandPanel'), 'ToolsPanel');
+			SC.command.updateCommandButtonsState($('.HeaderPanel .CommandPanel'));
+
+			var queryNavigationLinksEventArgs = SC.event.dispatchGlobalEvent(SC.event.QueryNavigationLinks, { navigationLinks: [] })
+
+			SC.ui.setContents($('.NavigationPanel'), [
+				queryNavigationLinksEventArgs.navigationLinks.map(createNavigationLinkFunc),
+				$div({ className: 'FlexSpacer' }),
+				$div({ className: 'TrayPanelContainer' }, [
+					$div({ className: 'TrayIconPanel' }),
+					$div({ className: 'UserMenuButton', _commandName: 'User' },
+						$span(SC.context.userDisplayName == null ? '' : SC.context.userDisplayName.toUpperCase()[0]),
+						$span(SC.context.userDisplayName)
+					),
+				]),
+			]);
+
+			SC.command.queryAndAddCommandButtons($('.NavigationPanel .TrayIconPanel'), 'TrayIconPanel');
+			SC.command.updateCommandButtonsState($('.NavigationPanel .TrayIconPanel'));
+
+			var setSelectedFunc = function () {
+				$$('.NavigationPanel > div')
+					.filter(function (_) { return !SC.util.isNullOrEmpty(_._commandArgument); })
+					.forEach(function (_) { SC.ui.setSelected(_, window.location.href.startsWith(_._commandArgument)); });
+			};
+
+			SC.event.addHandler(window, 'hashchange', setSelectedFunc);
+
+			setSelectedFunc();
+		});
+
+		var isTouchEnabled = (typeof document.documentElement.ontouchstart !== 'undefined');
+		SC.css.ensureClass(document.documentElement, 'TouchEnabled', isTouchEnabled);
+		SC.css.ensureClass(document.documentElement, 'TouchDisabled', !isTouchEnabled);
+		SC.css.ensureClass(document.documentElement, 'UserAuthenticated', SC.context.isUserAuthenticated);
+		SC.css.ensureClass(document.documentElement, 'NativeClient', SC.util.isCapable(SC.util.Caps.NativeClient));
+		SC.css.ensureClass(document.documentElement, 'HasMasterPanel', $('.MasterPanel'));
+		SC.css.ensureClass(document.documentElement, 'LogoImageVisible', SC.util.getBooleanResource('LogoPanel.ImageVisible'));
+		SC.css.ensureClass(document.documentElement, 'LogoIconVisible', SC.util.getBooleanResource('LogoPanel.IconVisible'));
+		SC.css.ensureClass(document.documentElement, 'LogoHeadingVisible', SC.util.getBooleanResource('LogoPanel.HeadingVisible'));
+		SC.css.ensureClass(document.documentElement, 'AnimationReduced', SC.util.getBooleanResource('Page.AnimationReduced'));
+		SC.css.ensureClass(document.documentElement, 'StartButtonVisible', SC.context.sessionTypeInfos.some(function (_) { return _.isButtonVisible; }));
+		SC.css.ensureClass(document.documentElement, SC.context.pageType, true);
+
+		SC.extension.initializeExtensions();
+		SC.event.dispatchGlobalEvent(SC.event.PreRender);
+		SC.util.recordLifeCycleEvent(SC.event.PreRender);
+		SC.ui.setVisible(document.body, true);
+		SC.event.dispatchGlobalEvent(SC.event.PostRender);
+		SC.util.recordLifeCycleEvent(SC.event.PostRender);
+
+		$$('*[tabIndex]').forEach(function (_) {
+			SC.event.addHandler(_, 'mousedown', function () {
+				SC.ui.setHiddenFocusAndClearOthers(_);
+			});
+		});
+
+		if (SC.context.focusedControlID)
+			$(SC.context.focusedControlID).focus();
+		else if (document.activeElement == document.body) {
+			$('.NavigationPanel').focus();
+			SC.ui.setHiddenFocusAndClearOthers($('.NavigationPanel'));
+		}
+
+	</script>
+</body>
+</html>
